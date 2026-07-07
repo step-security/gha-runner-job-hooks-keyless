@@ -403,7 +403,16 @@ export async function stopAgentProcess(): Promise<void> {
   }
 
   logInfo(`Sending SIGTERM to agent process: ${pid}`);
-  process.kill(pid, "SIGTERM");
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Failed to send SIGTERM to agent process ${pid}: ${message}`);
+    if (!processExists(pid)) {
+      removePidFile();
+    }
+    return;
+  }
 
   const { matched } = await waitForCondition(
     () => !processExists(pid),
@@ -411,13 +420,36 @@ export async function stopAgentProcess(): Promise<void> {
     1000,
   );
 
-  if (!matched) {
-    logWarning("Timed out waiting for agent process to stop; force killing agent");
+  if (matched) {
+    logInfo(`Agent process stopped gracefully: ${pid}`);
+    removePidFile();
+    return;
   }
 
+  logWarning("Timed out waiting for agent process to stop; force killing agent");
+
   if (processExists(pid)) {
-    process.kill(pid, "SIGKILL");
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logWarning(`Failed to send SIGKILL to agent process ${pid}: ${message}`);
+    }
   }
+
+  const { matched: killed } = await waitForCondition(
+    () => !processExists(pid),
+    3,
+    1000,
+  );
+
+  if (killed) {
+    logInfo(`Agent process force stopped: ${pid}`);
+  } else {
+    logWarning(`Agent process is still running after SIGKILL: ${pid}`);
+  }
+
+  removePidFile();
 }
 
 export function printLinuxAgentLogs(): void {
