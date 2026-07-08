@@ -6,15 +6,15 @@ import {
   readCorrelationIdFromAgentJson,
   stopAgentProcess,
 } from "./agent";
-import { runArcPostJobHook } from "./arc/post";
+import { runK8sPostJobHook } from "./k8s/post";
 import { detectLinuxRuntimeMode } from "./runtime";
 
 export async function runLinuxPostJobHook(): Promise<void> {
   const mode = detectLinuxRuntimeMode();
 
-  if (mode === "arc") {
-    logInfo("Running ARC post-hook");
-    await runArcPostJobHook();
+  if (mode === "k8s") {
+    logInfo("Running Kubernetes post-hook");
+    await runK8sPostJobHook();
     return;
   }
 

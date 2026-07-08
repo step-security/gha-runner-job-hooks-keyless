@@ -10,8 +10,9 @@ export type GithubRunContext = {
 };
 
 function parseWorkflowName(workflowRef: string): string {
-  const workflowMatch = workflowRef.match(/.*\/([^@]*)@.*/);
-  return workflowMatch ? workflowMatch[1] : workflowRef;
+  return workflowRef
+    .replace(/.*\.github\/workflows\//, "")
+    .replace(/@.*/, "");
 }
 
 export function getGithubRunContext(): GithubRunContext {

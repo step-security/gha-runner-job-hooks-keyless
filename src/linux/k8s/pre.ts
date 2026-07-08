@@ -67,7 +67,7 @@ async function waitForPolicy(
   }
 }
 
-export async function runArcPreJobHook(): Promise<void> {
+export async function runK8sPreJobHook(): Promise<void> {
   logInfo("PRE-JOB HOOK: Checking for policy from Policy Store...");
 
   const { hasPolicy, shouldSleep } = await fetchWorkflowPolicyCheck({

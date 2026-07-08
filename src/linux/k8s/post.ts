@@ -7,7 +7,7 @@ const RuntimeConfig = {
   correlationId: process.env.RUNNER_NAME || "",
 };
 
-export async function runArcPostJobHook(): Promise<void> {
+export async function runK8sPostJobHook(): Promise<void> {
   const summaryUrl = `${Urls.stepSecurityApi}/github/${RuntimeConfig.githubRepository}/actions/runs/${RuntimeConfig.runId}/correlation/${RuntimeConfig.correlationId}/job-markdown-summary?environment=ARC`;
 
   try {

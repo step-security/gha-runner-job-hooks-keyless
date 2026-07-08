@@ -18,6 +18,7 @@ export type WorkflowPolicyCheckParams = {
 };
 
 export type PolicyStoreConfig = {
+  policyName: string;
   allowedEndpoints: string;
   disableSudo: boolean;
   disableSudoAndContainers: boolean;
@@ -25,6 +26,11 @@ export type PolicyStoreConfig = {
   disableTelemetry: boolean;
   egressPolicy: string;
 };
+
+export type PolicyStoreFetchResult =
+  | { status: "found"; config: PolicyStoreConfig }
+  | { status: "not_found" }
+  | { status: "error" };
 
 function parseBooleanField(body: string, fieldName: string): boolean {
   try {
@@ -92,9 +98,9 @@ export async function fetchPolicyStoreConfig(params: {
   runId: string;
   correlationId: string;
   apiKey: string;
-}): Promise<PolicyStoreConfig | null> {
+}): Promise<PolicyStoreFetchResult> {
   if (!params.apiKey) {
-    return null;
+    return { status: "error" };
   }
 
   const url = new URL(
@@ -112,16 +118,17 @@ export async function fetchPolicyStoreConfig(params: {
     });
 
     if (String(statusCode) === "404") {
-      return null;
+      return { status: "not_found" };
     }
 
     if (String(statusCode) !== "200") {
       logError(`Policy fetch failed with status ${statusCode}`);
       logInfo(`Response: ${body}`);
-      return null;
+      return { status: "error" };
     }
 
     const response = JSON.parse(body) as {
+      policy_name?: unknown;
       allowed_endpoints?: unknown;
       disable_sudo?: unknown;
       disable_sudo_and_containers?: unknown;
@@ -137,23 +144,28 @@ export async function fetchPolicyStoreConfig(params: {
       : "";
 
     return {
-      allowedEndpoints,
-      disableSudo: response.disable_sudo === true,
-      disableSudoAndContainers: response.disable_sudo_and_containers === true,
-      disableFileMonitoring: response.disable_file_monitoring === true,
-      disableTelemetry: response.disable_telemetry === true,
-      egressPolicy:
-        typeof response.egress_policy === "string" &&
-        response.egress_policy.length > 0
-          ? response.egress_policy
-          : "audit",
+      status: "found",
+      config: {
+        policyName:
+          typeof response.policy_name === "string" ? response.policy_name : "",
+        allowedEndpoints,
+        disableSudo: response.disable_sudo === true,
+        disableSudoAndContainers: response.disable_sudo_and_containers === true,
+        disableFileMonitoring: response.disable_file_monitoring === true,
+        disableTelemetry: response.disable_telemetry === true,
+        egressPolicy:
+          typeof response.egress_policy === "string" &&
+          response.egress_policy.length > 0
+            ? response.egress_policy
+            : "audit",
+      },
     };
   } catch (error) {
     const status =
       error instanceof Error && error.message ? error.message : "unknown";
     logError(`Policy fetch failed with status ${status}`);
     logInfo("Response: ");
-    return null;
+    return { status: "error" };
   }
 }
 
