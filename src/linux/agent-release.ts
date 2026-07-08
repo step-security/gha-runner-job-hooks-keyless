@@ -15,10 +15,7 @@ type GitHubRelease = {
   assets: GitHubReleaseAsset[];
 };
 
-const AgentRelease = {
-  persistentArtifactPrefix: "harden-runner-bravo",
-  ephemeralArtifactPrefix: "harden-runner",
-} as const;
+const AgentReleaseArtifactPrefix = "harden-runner-bravo";
 
 const LatestAgentReleaseUrl =
   "https://api.github.com/repos/step-security/agent-ebpf/releases/latest";
@@ -37,10 +34,7 @@ function getAgentArch(): string {
   return "";
 }
 
-function buildAgentArtifactName(
-  tag: string,
-  isPersistentAgent: boolean,
-): string {
+function buildAgentArtifactName(tag: string): string {
   const arch = getAgentArch();
   if (!arch) {
     logWarning(`Unsupported agent architecture: ${process.arch}`);
@@ -48,11 +42,8 @@ function buildAgentArtifactName(
   }
 
   const version = tag.startsWith("v") ? tag.slice(1) : tag;
-  const prefix = isPersistentAgent
-    ? AgentRelease.persistentArtifactPrefix
-    : AgentRelease.ephemeralArtifactPrefix;
 
-  return `${prefix}_${version}_linux_${arch}.tar.gz`;
+  return `${AgentReleaseArtifactPrefix}_${version}_linux_${arch}.tar.gz`;
 }
 
 export async function fetchAgentRelease(
@@ -97,12 +88,8 @@ export async function fetchAgentRelease(
 
 export function selectAgentReleaseAsset(
   release: GitHubRelease,
-  isPersistentAgent: boolean,
 ): GitHubReleaseAsset | null {
-  const artifactName = buildAgentArtifactName(
-    release.tag_name,
-    isPersistentAgent,
-  );
+  const artifactName = buildAgentArtifactName(release.tag_name);
   if (!artifactName) {
     return null;
   }

@@ -2,6 +2,7 @@ import * as fs from "fs";
 
 const { randomUUID } = require("crypto") as typeof import("crypto");
 
+import { resolveApiKey } from "../lib/api-key";
 import {
   getWithRetry,
   logCommandFailure,
@@ -10,19 +11,12 @@ import {
   runCommand,
   waitForCondition,
 } from "../lib/common";
-import {
-  AgentFiles,
-  AgentRoot,
-  AgentVersionLinux,
-  DisableAgentUpdate,
-  IsEphemeralLinux,
-  Urls,
-} from "../lib/config";
+import { AgentFiles, AgentRuntimeConfig, Urls } from "../lib/config";
 import { writeJsonFile } from "../lib/files";
 import { getGithubRunContext } from "../lib/github-context";
 import {
   fetchPolicyStoreConfig,
-  fetchWorkflowPolicyCheck,
+  PolicyStoreFetchResult,
   PolicyStoreConfig,
 } from "../lib/policy";
 import {
@@ -76,16 +70,23 @@ function getCurrentGid(): string {
 }
 
 function ensureAgentRoot(): void {
-  const mkdirResult = runCommand("sudo", ["mkdir", "-p", AgentRoot]);
-  logCommandFailure(`Creating ${AgentRoot}`, mkdirResult);
+  const mkdirResult = runCommand("sudo", [
+    "mkdir",
+    "-p",
+    AgentRuntimeConfig.linuxRoot,
+  ]);
+  logCommandFailure(`Creating ${AgentRuntimeConfig.linuxRoot}`, mkdirResult);
 
   const chownResult = runCommand("sudo", [
     "chown",
     "-R",
     `${getCurrentUid()}:${getCurrentGid()}`,
-    AgentRoot,
+    AgentRuntimeConfig.linuxRoot,
   ]);
-  logCommandFailure(`Changing ownership for ${AgentRoot}`, chownResult);
+  logCommandFailure(
+    `Changing ownership for ${AgentRuntimeConfig.linuxRoot}`,
+    chownResult,
+  );
 }
 
 function detectAgentBuildInfo(): AgentBuildInfo | null {
@@ -148,11 +149,10 @@ export function readCorrelationIdFromAgentJson(): string {
   }
 }
 
-function getLinuxApiKey(): string {
-  return process.env.STEPSECURITY_API_KEY || process.env.API_KEY || "";
-}
-
-function createBaseAgentConfig(correlationId: string): LinuxAgentConfig {
+function createBaseAgentConfig(
+  correlationId: string,
+  apiKey: string,
+): LinuxAgentConfig {
   const runnerWorkDirectory = process.env.GITHUB_WORKSPACE || "";
   return {
     customer: RuntimeConfig.owner,
@@ -164,8 +164,8 @@ function createBaseAgentConfig(correlationId: string): LinuxAgentConfig {
     runner_work_directory: runnerWorkDirectory,
     api_url: Urls.stepSecurityApi,
     telemetry_url: Urls.stepSecurityTelemetry,
-    api_key: getLinuxApiKey(),
-    is_persistent: !IsEphemeralLinux,
+    api_key: apiKey,
+    is_persistent: !AgentRuntimeConfig.isEphemeralLinux,
     has_prejob_policy: false,
     allowed_endpoints: "",
     egress_policy: "audit",
@@ -181,16 +181,20 @@ function createBaseAgentConfig(correlationId: string): LinuxAgentConfig {
 
 async function loadPolicyConfig(
   correlationId: string,
-): Promise<{ hasPolicy: boolean; config: PolicyStoreConfig | null }> {
-  const apiKey = getLinuxApiKey();
+  apiKey: string,
+): Promise<{
+  hasPolicy: boolean;
+  config: PolicyStoreConfig | null;
+  fetchStatus: PolicyStoreFetchResult["status"];
+}> {
   if (!apiKey) {
     logWarning(
-      "STEPSECURITY_API_KEY is not set; proceeding without policy fetch",
+      "API key is not set; defaulting to audit mode without policy fetch",
     );
-    return { hasPolicy: false, config: null };
+    return { hasPolicy: false, config: null, fetchStatus: "error" };
   }
 
-  const hasPolicyResult = await fetchWorkflowPolicyCheck({
+  const result = await fetchPolicyStoreConfig({
     owner: RuntimeConfig.owner,
     repo: RuntimeConfig.repo,
     workflow: RuntimeConfig.workflow,
@@ -199,20 +203,11 @@ async function loadPolicyConfig(
     apiKey,
   });
 
-  if (!hasPolicyResult.hasPolicy) {
-    return { hasPolicy: false, config: null };
+  if (result.status !== "found") {
+    return { hasPolicy: false, config: null, fetchStatus: result.status };
   }
 
-  const config = await fetchPolicyStoreConfig({
-    owner: RuntimeConfig.owner,
-    repo: RuntimeConfig.repo,
-    workflow: RuntimeConfig.workflow,
-    runId: RuntimeConfig.runId,
-    correlationId,
-    apiKey,
-  });
-
-  return { hasPolicy: true, config };
+  return { hasPolicy: true, config: result.config, fetchStatus: result.status };
 }
 
 export async function buildAgentJsonForCurrentJob(): Promise<string> {
@@ -221,13 +216,19 @@ export async function buildAgentJsonForCurrentJob(): Promise<string> {
     `Generated job correlationId for self-hosted agent: ${correlationId}`,
   );
 
-  const agentConfig = createBaseAgentConfig(correlationId);
-  const { hasPolicy, config } = await loadPolicyConfig(correlationId);
+  const apiKey = await resolveApiKey({ owner: RuntimeConfig.owner });
+  const agentConfig = createBaseAgentConfig(correlationId, apiKey);
+  const { hasPolicy, config, fetchStatus } = await loadPolicyConfig(
+    correlationId,
+    apiKey,
+  );
 
   if (hasPolicy) {
-    logInfo("Policy found");
-  } else {
+    logInfo(`Policy found: ${config?.policyName || "unnamed"}`);
+  } else if (fetchStatus === "not_found") {
     logInfo("No policy configured from policy store");
+  } else {
+    logWarning("Policy fetch failed; defaulting to audit mode");
   }
 
   if (config) {
@@ -254,12 +255,12 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
   ensureAgentRoot();
 
   const buildInfo = detectAgentBuildInfo();
-  if (buildInfo && DisableAgentUpdate) {
+  if (buildInfo && AgentRuntimeConfig.disableLinuxAgentUpdate) {
     logInfo("Automatic agent update is disabled; skipping update check");
     return;
   }
 
-  const release = await fetchAgentRelease(AgentVersionLinux);
+  const release = await fetchAgentRelease(AgentRuntimeConfig.linuxAgentVersion);
   if (!release) {
     return;
   }
@@ -273,7 +274,7 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     }
   }
 
-  const asset = selectAgentReleaseAsset(release, true);
+  const asset = selectAgentReleaseAsset(release);
   if (!asset) {
     logWarning(
       `No matching AgentBravo release asset found for ${release.tag_name} on ${process.arch}`,
@@ -289,7 +290,10 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     logInfo(`Installing AgentBravo ${release.tag_name}`);
   }
 
-  const installed = downloadAndExtractReleaseAsset(asset, AgentRoot);
+  const installed = downloadAndExtractReleaseAsset(
+    asset,
+    AgentRuntimeConfig.linuxRoot,
+  );
   if (!installed) {
     throw new Error("Failed to install AgentBravo");
   }
@@ -365,7 +369,7 @@ export async function startAgentProcess(): Promise<void> {
     "sudo",
     [AgentFiles.linux.agentBinary],
     {
-      cwd: AgentRoot,
+      cwd: AgentRuntimeConfig.linuxRoot,
       detached: true,
       stdio: ["ignore", logStream, logStream],
     },
@@ -426,7 +430,9 @@ export async function stopAgentProcess(): Promise<void> {
     return;
   }
 
-  logWarning("Timed out waiting for agent process to stop; force killing agent");
+  logWarning(
+    "Timed out waiting for agent process to stop; force killing agent",
+  );
 
   if (processExists(pid)) {
     try {

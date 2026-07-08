@@ -4,15 +4,15 @@ import {
   ensureLatestBravoLinuxAgent,
   startAgentProcess,
 } from "./agent";
-import { runArcPreJobHook } from "./arc/pre";
+import { runK8sPreJobHook } from "./k8s/pre";
 import { detectLinuxRuntimeMode } from "./runtime";
 
 export async function runLinuxPreJobHook(): Promise<void> {
   const mode = detectLinuxRuntimeMode();
 
-  if (mode === "arc") {
-    logInfo("Running ARC pre-hook");
-    await runArcPreJobHook();
+  if (mode === "k8s") {
+    logInfo("Running Kubernetes pre-hook");
+    await runK8sPreJobHook();
     return;
   }
 

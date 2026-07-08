@@ -1,7 +1,23 @@
 import * as fs from "fs";
-import { LinuxHookMode } from "../lib/config";
+import { HookModeConfig } from "../lib/config";
 
-export type LinuxRuntimeMode = "arc" | "vm";
+import { existsSync } from "fs";
+
+const SERVICE_ACCOUNT_TOKEN_PATH =
+  "/var/run/secrets/kubernetes.io/serviceaccount/token";
+
+export function isRunningInKubernetes(): boolean {
+  if (
+    Boolean(process.env.KUBERNETES_SERVICE_HOST) ||
+    existsSync(SERVICE_ACCOUNT_TOKEN_PATH)
+  ) {
+    return true;
+  }
+
+  return isARCRunner();
+}
+
+export type LinuxRuntimeMode = "k8s" | "vm";
 
 export function isARCRunner(): boolean {
   const runnerUserAgent = process.env.GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT;
@@ -20,8 +36,8 @@ function isSecondaryPod(): boolean {
 }
 
 function parseExplicitLinuxHookMode(): LinuxRuntimeMode | "" {
-  if (LinuxHookMode === "arc" || LinuxHookMode === "vm") {
-    return LinuxHookMode;
+  if (HookModeConfig.linux === "k8s" || HookModeConfig.linux === "vm") {
+    return HookModeConfig.linux;
   }
 
   return "";
@@ -33,8 +49,8 @@ export function detectLinuxRuntimeMode(): LinuxRuntimeMode {
     return explicitMode;
   }
 
-  if (isARCRunner()) {
-    return "arc";
+  if (isRunningInKubernetes()) {
+    return "k8s";
   }
 
   return "vm";
