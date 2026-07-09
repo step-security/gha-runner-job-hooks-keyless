@@ -35,14 +35,14 @@ cat <<EOF | sudo tee /home/agent/step-prejob-hook.sh >/dev/null
 #!/bin/bash
 export STEP_AGENT_ROOT="/home/agent"
 export STEP_AGENT_VERSION_LINUX="latest"
-curl -fsSL "https://github.com/step-security/jobhooks/releases/download/vX.Y.Z/pre.js" | node
+curl -fsSL "https://github.com/step-security/gha-runner-job-hooks-keyless/releases/download/vX.Y.Z/pre.js" | node
 EOF
 
 cat <<EOF | sudo tee /home/agent/step-postjob-hook.sh >/dev/null
 #!/bin/bash
 export STEP_AGENT_ROOT="/home/agent"
 export STEP_AGENT_VERSION_LINUX="latest"
-curl -fsSL "https://github.com/step-security/jobhooks/releases/download/vX.Y.Z/post.js" | node
+curl -fsSL "https://github.com/step-security/gha-runner-job-hooks-keyless/releases/download/vX.Y.Z/post.js" | node
 EOF
 
 sudo chmod +x /home/agent/step-prejob-hook.sh /home/agent/step-postjob-hook.sh
