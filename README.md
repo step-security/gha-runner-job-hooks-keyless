@@ -82,7 +82,8 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_API_KEY_SECRET_NAME`  | `stepsecurity/orgs/<owner>/vm-api-key` | Secrets Manager secret name. Supports `<owner>` placeholder substitution with the GitHub owner before reading the secret. |
 | `STEP_API_KEY_SECRET_REGION`| `us-west-2`                          | AWS region for the Secrets Manager secret.                                |
 | `STEP_API_KEY_SECRET_FIELD` | `api_key`                            | JSON field inside the Secrets Manager secret that contains the API key.   |
-| `STEP_API`                  | `https://int.api.stepsecurity.io/v1` | StepSecurity API endpoint.                                                |
+| `STEP_API`                  | `https://agent.api.stepsecurity.io/v1` | StepSecurity API endpoint.                                                |
+| `STEP_TELEMETRY_URL`        | `https://prod.app-api.stepsecurity.io/v1` | StepSecurity telemetry endpoint.                                      |
 
 Set these values in the pre-job and post-job wrapper scripts before running the hook. On Linux, use `export STEP_NAME=value`. Update the wrapper scripts and restart the runner service if you change these values.
 
