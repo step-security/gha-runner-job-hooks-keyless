@@ -25,7 +25,7 @@ export async function fetchApiKeyFromSecret(
     new AssumeRoleCommand({
       RoleArn: opts.roleArn,
       RoleSessionName: `secret-read-${Date.now()}`,
-      DurationSeconds: 3600,
+      DurationSeconds: 900,
     }),
   );
 
