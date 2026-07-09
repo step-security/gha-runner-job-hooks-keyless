@@ -1,5 +1,5 @@
 {
-  "name": "jobhooks",
+  "name": "gha-runner-job-hooks-keyless",
   "private": true,
   "scripts": {
     "build": "npm run pre && npm run post",
