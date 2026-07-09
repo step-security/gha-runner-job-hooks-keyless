@@ -13,7 +13,7 @@ export const HookModeConfig = {
 export const ApiKeyConfig = {
   envApiKey: process.env.STEP_API_KEY || "",
   roleArn: process.env.STEP_API_KEY_ROLE_ARN || "",
-  secretName: process.env.STEP_API_KEY_SECRET_NAME || "",
+  secretName: process.env.STEP_API_KEY_SECRET_NAME || "stepsecurity/orgs/<owner>/vm-api-key",
   secretRegion: process.env.STEP_API_KEY_SECRET_REGION || "us-west-2",
   secretField: process.env.STEP_API_KEY_SECRET_FIELD || "api_key",
 } as const;
