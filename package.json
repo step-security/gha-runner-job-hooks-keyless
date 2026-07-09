@@ -1,0 +1,16 @@
+{
+  "name": "gha-runner-job-hooks-keyless",
+  "private": true,
+  "scripts": {
+    "build": "npm run pre && npm run post",
+    "pre": "mkdir -p dist && ncc build src/pre.ts --no-source-map-register -m -o dist/pre && mv dist/pre/index.js dist/pre.js && rmdir dist/pre",
+    "post": "mkdir -p dist && ncc build src/post.ts --no-source-map-register -m -o dist/post && mv dist/post/index.js dist/post.js && rmdir dist/post"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-secrets-manager": "3.883.0",
+    "@aws-sdk/client-sts": "3.883.0",
+    "@types/node": "26.1.0",
+    "@vercel/ncc": "0.38.4",
+    "typescript": "6.0.3"
+  }
+}
