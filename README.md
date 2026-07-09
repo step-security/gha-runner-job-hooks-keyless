@@ -77,9 +77,36 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_AGENT_ROOT`           | `/home/agent`                        | Linux directory used for agent files, status files, logs, and hook state. |
 | `STEP_DISABLE_AGENT_UPDATE` | `false`                              | Set to `true` to disable automatic Linux agent download/update.           |
 | `STEP_AGENT_VERSION_LINUX`  | `latest`                             | Linux agent release to install. Use `latest` or a specific release tag.   |
+| `STEP_API_KEY`              | ``                                   | StepSecurity API key. If set, the hook uses this value directly.          |
+| `STEP_API_KEY_ROLE_ARN`     | ``                                   | IAM role to assume before reading the API key from AWS Secrets Manager.   |
+| `STEP_API_KEY_SECRET_NAME`  | ``                                   | Secrets Manager secret name. If unset, the hook falls back to `stepsecurity/orgs/<owner>/vm-api-key` when the GitHub owner is available. |
+| `STEP_API_KEY_SECRET_REGION`| `us-west-2`                          | AWS region for the Secrets Manager secret.                                |
+| `STEP_API_KEY_SECRET_FIELD` | `api_key`                            | JSON field inside the Secrets Manager secret that contains the API key.   |
 | `STEP_API`                  | `https://int.api.stepsecurity.io/v1` | StepSecurity API endpoint.                                                |
 
 Set these values in the pre-job and post-job wrapper scripts before running the hook. On Linux, use `export STEP_NAME=value`. Update the wrapper scripts and restart the runner service if you change these values.
+
+### Resolving the StepSecurity API key
+
+The hook resolves the API key in this order:
+
+1. `STEP_API_KEY`
+2. AWS Secrets Manager, using `STEP_API_KEY_ROLE_ARN`
+
+To resolve the API key from AWS Secrets Manager, set:
+
+- `STEP_API_KEY_ROLE_ARN` to a role the runner can assume
+- `STEP_API_KEY_SECRET_NAME` to the secret name, or omit it to use `stepsecurity/orgs/<owner>/vm-api-key`
+- `STEP_API_KEY_SECRET_REGION` if the secret is not in `us-west-2`
+- `STEP_API_KEY_SECRET_FIELD` if the JSON field is not `api_key`
+
+The secret value must be a JSON object containing the API key field, for example:
+
+```json
+{
+  "api_key": "your-stepsecurity-api-key"
+}
+```
 
 ## Notes and troubleshooting
 
