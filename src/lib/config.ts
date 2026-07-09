@@ -31,7 +31,7 @@ export const AgentFiles = {
 } as const;
 
 export const Urls = {
-  stepSecurityApi: process.env.STEP_API || "https://int.api.stepsecurity.io/v1",
+  stepSecurityApi: process.env.STEP_API || "https://agent.api.stepsecurity.io/v1",
   stepSecurityTelemetry:
-    process.env.STEP_TELEMETRY_URL || "https://int.app-api.stepsecurity.io/v1",
+    process.env.STEP_TELEMETRY_URL || "https://prod.app-api.stepsecurity.io/v1",
 } as const;
