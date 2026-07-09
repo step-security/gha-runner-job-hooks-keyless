@@ -10,6 +10,7 @@ import { ApiKeyConfig } from "./config";
 export interface FetchApiKeyOptions {
   roleArn: string;
   secretName: string;
+  orgName: string;
   region?: string;
   keyField?: string;
 }
@@ -26,6 +27,7 @@ export async function fetchApiKeyFromSecret(
       RoleArn: opts.roleArn,
       RoleSessionName: `secret-read-${Date.now()}`,
       DurationSeconds: 900,
+      Tags: [{ Key: "OrgName", Value: opts.orgName.toUpperCase() }],
     }),
   );
 
@@ -72,9 +74,6 @@ export async function resolveApiKey(
   }
 
   const roleArn = ApiKeyConfig.roleArn;
-  const secretName =
-    ApiKeyConfig.secretName ||
-    (options.owner ? `stepsecurity/orgs/${options.owner}/vm-api-key` : "");
   if (!roleArn) {
     logWarning(
       "STEP_API_KEY_ROLE_ARN is not set; skipping AWS Secrets Manager API key lookup",
@@ -82,17 +81,20 @@ export async function resolveApiKey(
     return "";
   }
 
-  if (!secretName) {
+  if (!options.owner) {
     logWarning(
-      "STEP_API_KEY_SECRET_NAME is not set and owner was not provided; skipping AWS Secrets Manager API key lookup",
+      "GitHub owner was not provided; skipping AWS Secrets Manager API key lookup because the OrgName session tag is required",
     );
     return "";
   }
+
+  const secretName = ApiKeyConfig.secretName.replace(/<owner>/g, options.owner);
 
   logInfo(`Using API key from AWS Secrets Manager secret: ${secretName}`);
   return fetchApiKeyFromSecret({
     roleArn,
     secretName,
+    orgName: options.owner,
     region: ApiKeyConfig.secretRegion,
     keyField: ApiKeyConfig.secretField,
   });
