@@ -27,7 +27,7 @@ export async function fetchApiKeyFromSecret(
       RoleArn: opts.roleArn,
       RoleSessionName: `secret-read-${Date.now()}`,
       DurationSeconds: 900,
-      Tags: [{ Key: "OrgName", Value: opts.orgName.toUpperCase() }],
+      Tags: [{ Key: "OrgName", Value: opts.orgName}],
     }),
   );
 
