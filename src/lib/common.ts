@@ -1,6 +1,8 @@
 const fs = require("fs") as typeof import("fs");
 const https = require("https") as typeof import("https");
 const childProcess = require("child_process") as typeof import("child_process");
+const { pipeline } = require("stream/promises") as typeof import("stream/promises");
+const { Readable } = require("stream") as typeof import("stream");
 
 type RunCommandOptions = {
   captureOutput?: boolean;
@@ -70,6 +72,35 @@ export async function getWithRetry(
   }
 
   throw lastError;
+}
+
+export async function downloadFile(
+  url: string,
+  destinationPath: string,
+  headers: HttpHeaders = {},
+): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      headers,
+      redirect: "follow",
+    });
+
+    if (!response.ok || !response.body) {
+      logWarning(`Download failed for ${url}: status ${response.status}`);
+      return false;
+    }
+
+    await pipeline(
+      Readable.fromWeb(response.body as any),
+      fs.createWriteStream(destinationPath),
+    );
+
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Download failed for ${url}: ${message}`);
+    return false;
+  }
 }
 
 export function findEchoCommand(): string {
