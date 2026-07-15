@@ -32,6 +32,16 @@ export type PolicyStoreFetchResult =
   | { status: "not_found" }
   | { status: "error" };
 
+type PolicyStoreResponse = {
+  policy_name?: unknown;
+  allowed_endpoints?: unknown;
+  disable_sudo?: unknown;
+  disable_sudo_and_containers?: unknown;
+  disable_file_monitoring?: unknown;
+  disable_telemetry?: unknown;
+  egress_policy?: unknown;
+};
+
 function parseBooleanField(body: string, fieldName: string): boolean {
   try {
     const response = JSON.parse(body) as Record<string, unknown>;
@@ -127,38 +137,14 @@ export async function fetchPolicyStoreConfig(params: {
       return { status: "error" };
     }
 
-    const response = JSON.parse(body) as {
-      policy_name?: unknown;
-      allowed_endpoints?: unknown;
-      disable_sudo?: unknown;
-      disable_sudo_and_containers?: unknown;
-      disable_file_monitoring?: unknown;
-      disable_telemetry?: unknown;
-      egress_policy?: unknown;
-    };
-
-    const allowedEndpoints = Array.isArray(response.allowed_endpoints)
-      ? response.allowed_endpoints
-          .filter((value): value is string => typeof value === "string")
-          .join(" ")
-      : "";
+    const config = parsePolicyStoreConfig(body);
+    if (!config) {
+      return { status: "not_found" };
+    }
 
     return {
       status: "found",
-      config: {
-        policyName:
-          typeof response.policy_name === "string" ? response.policy_name : "",
-        allowedEndpoints,
-        disableSudo: response.disable_sudo === true,
-        disableSudoAndContainers: response.disable_sudo_and_containers === true,
-        disableFileMonitoring: response.disable_file_monitoring === true,
-        disableTelemetry: response.disable_telemetry === true,
-        egressPolicy:
-          typeof response.egress_policy === "string" &&
-          response.egress_policy.length > 0
-            ? response.egress_policy
-            : "audit",
-      },
+      config,
     };
   } catch (error) {
     const status =
@@ -189,4 +175,34 @@ export async function fetchWorkflowPolicyStatus(params: {
   } catch {
     return "SLEEP";
   }
+}
+
+function parsePolicyStoreConfig(body: string): PolicyStoreConfig | null {
+  const response = JSON.parse(body) as PolicyStoreResponse;
+  const policyName =
+    typeof response.policy_name === "string" ? response.policy_name.trim() : "";
+
+  if (!policyName) {
+    return null;
+  }
+
+  const allowedEndpoints = Array.isArray(response.allowed_endpoints)
+    ? response.allowed_endpoints
+        .filter((value): value is string => typeof value === "string")
+        .join(" ")
+    : "";
+
+  return {
+    policyName,
+    allowedEndpoints,
+    disableSudo: response.disable_sudo === true,
+    disableSudoAndContainers: response.disable_sudo_and_containers === true,
+    disableFileMonitoring: response.disable_file_monitoring === true,
+    disableTelemetry: response.disable_telemetry === true,
+    egressPolicy:
+      typeof response.egress_policy === "string" &&
+      response.egress_policy.length > 0
+        ? response.egress_policy
+        : "audit",
+  };
 }

@@ -1,67 +1,35 @@
-import * as fs from "fs";
-
-const { createHash } = require("crypto") as typeof import("crypto");
-
-import { getWithRetry, logCommandFailure, logInfo, logWarning, runCommand } from "../lib/common";
-
-type GitHubReleaseAsset = {
-  name: string;
-  browser_download_url: string;
-  digest?: string;
-};
-
-type GitHubRelease = {
-  tag_name: string;
-  assets: GitHubReleaseAsset[];
-};
+import {
+  getWithRetry,
+  logCommandFailure,
+  logInfo,
+  logWarning,
+  runCommand,
+} from "../lib/common";
+import { Urls } from "../lib/config";
+import {
+  AgentRelease,
+  AgentReleaseAsset,
+  downloadReleaseAsset,
+  verifyReleaseChecksum,
+} from "../lib/agent-release";
 
 const AgentReleaseArtifactPrefix = "harden-runner-bravo";
 
-const LatestAgentReleaseUrl =
-  "https://api.github.com/repos/step-security/agent-ebpf/releases/latest";
-const TaggedAgentReleaseBaseUrl =
-  "https://api.github.com/repos/step-security/agent-ebpf/releases/tags";
-
-function getAgentArch(): string {
-  if (process.arch === "x64") {
-    return "amd64";
-  }
-
-  if (process.arch === "arm64") {
-    return "arm64";
-  }
-
-  return "";
-}
-
-function buildAgentArtifactName(tag: string): string {
-  const arch = getAgentArch();
-  if (!arch) {
-    logWarning(`Unsupported agent architecture: ${process.arch}`);
-    return "";
-  }
-
-  const version = tag.startsWith("v") ? tag.slice(1) : tag;
-
-  return `${AgentReleaseArtifactPrefix}_${version}_linux_${arch}.tar.gz`;
-}
+const AgentReleaseBaseUrl = `${Urls.stepSecurityApi}/harden-runner-agent/github/linux/single/releases`;
 
 export async function fetchAgentRelease(
   versionSelector: string,
-): Promise<GitHubRelease | null> {
+): Promise<AgentRelease | null> {
   const releaseUrl =
     versionSelector === "latest"
-      ? LatestAgentReleaseUrl
-      : `${TaggedAgentReleaseBaseUrl}/${encodeURIComponent(versionSelector)}`;
+      ? `${AgentReleaseBaseUrl}/latest`
+      : `${AgentReleaseBaseUrl}/${encodeURIComponent(versionSelector)}`;
 
   try {
-    const { statusCode, body } = await getWithRetry(
-      new URL(releaseUrl),
-      {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "stepsecurity-jobhooks",
-      },
-    );
+    const { statusCode, body } = await getWithRetry(new URL(releaseUrl), {
+      Accept: "application/json",
+      "User-Agent": "stepsecurity-jobhooks",
+    });
 
     if (String(statusCode) !== "200") {
       logWarning(
@@ -70,8 +38,8 @@ export async function fetchAgentRelease(
       return null;
     }
 
-    const release = JSON.parse(body) as GitHubRelease;
-    if (!release.tag_name || !Array.isArray(release.assets)) {
+    const release = JSON.parse(body) as AgentRelease;
+    if (!release.tag || !Array.isArray(release.assets)) {
       logWarning("Agent release response is missing expected fields");
       return null;
     }
@@ -87,58 +55,22 @@ export async function fetchAgentRelease(
 }
 
 export function selectAgentReleaseAsset(
-  release: GitHubRelease,
-): GitHubReleaseAsset | null {
-  const artifactName = buildAgentArtifactName(release.tag_name);
+  release: AgentRelease,
+): AgentReleaseAsset | null {
+  const artifactName = buildAgentArtifactName(release.tag);
   if (!artifactName) {
     return null;
   }
 
-  return release.assets.find((asset) => asset.name === artifactName) || null;
-}
-
-function downloadFile(url: string, destinationPath: string): boolean {
-  const downloadResult = runCommand("curl", [
-    "-fsSL",
-    "-o",
-    destinationPath,
-    url,
-  ]);
-  logCommandFailure(`Downloading ${url}`, downloadResult);
-  return Boolean(downloadResult && downloadResult.status === 0);
-}
-
-function computeSha256(filePath: string): string {
-  const hash = createHash("sha256");
-  hash.update(fs.readFileSync(filePath));
-  return hash.digest("hex");
-}
-
-function verifyReleaseAsset(
-  archivePath: string,
-  asset: GitHubReleaseAsset,
-): boolean {
-  if (!asset.digest || !asset.digest.startsWith("sha256:")) {
-    logWarning(`Missing sha256 digest for ${asset.name}; skipping agent update`);
-    return false;
-  }
-
-  const expectedDigest = asset.digest.slice("sha256:".length);
-  const actualDigest = computeSha256(archivePath);
-  if (actualDigest !== expectedDigest) {
-    logWarning(
-      `Checksum validation failed for ${asset.name}: expected ${expectedDigest}, got ${actualDigest}`,
-    );
-    return false;
-  }
-
-  logInfo(
-    `Checksum validation succeeded for ${asset.name}: ${actualDigest}`,
+  return (
+    release.assets.find((asset) => asset.asset_name === artifactName) || null
   );
-  return true;
 }
 
-function extractReleaseAsset(archivePath: string, destinationDir: string): boolean {
+function extractReleaseAsset(
+  archivePath: string,
+  destinationDir: string,
+): boolean {
   const extractResult = runCommand("sudo", [
     "tar",
     "-xzf",
@@ -155,23 +87,21 @@ function cleanupArchive(archivePath: string): void {
   logCommandFailure(`Removing ${archivePath}`, cleanupResult);
 }
 
-export function downloadAndExtractReleaseAsset(
-  asset: GitHubReleaseAsset,
+export async function downloadAndExtractReleaseAsset(
+  asset: AgentReleaseAsset,
   destinationDir: string,
-): boolean {
-  const archivePath = `/tmp/${asset.name}`;
-
-  logInfo(`Downloading agent artifact from ${asset.browser_download_url}`);
-  if (!downloadFile(asset.browser_download_url, archivePath)) {
+): Promise<boolean> {
+  const archivePath = `/tmp/${asset.asset_name}`;
+  if (!(await downloadReleaseAsset(asset, archivePath))) {
     return false;
   }
 
-  if (!verifyReleaseAsset(archivePath, asset)) {
+  if (!verifyReleaseChecksum(archivePath, asset)) {
     cleanupArchive(archivePath);
     return false;
   }
 
-  logInfo(`Extracting ${asset.name} to ${destinationDir}`);
+  logInfo(`Extracting ${asset.asset_name} to ${destinationDir}`);
   if (!extractReleaseAsset(archivePath, destinationDir)) {
     cleanupArchive(archivePath);
     return false;
@@ -179,4 +109,28 @@ export function downloadAndExtractReleaseAsset(
 
   cleanupArchive(archivePath);
   return true;
+}
+
+function buildAgentArtifactName(tag: string): string {
+  const arch = getAgentArch();
+  if (!arch) {
+    logWarning(`Unsupported agent architecture: ${process.arch}`);
+    return "";
+  }
+
+  const version = tag.startsWith("v") ? tag.slice(1) : tag;
+
+  return `${AgentReleaseArtifactPrefix}_${version}_linux_${arch}.tar.gz`;
+}
+
+function getAgentArch(): string {
+  if (process.arch === "x64") {
+    return "amd64";
+  }
+
+  if (process.arch === "arm64") {
+    return "arm64";
+  }
+
+  return "";
 }

@@ -1,6 +1,8 @@
+import { buildSharedAgentJsonForCurrentJob } from "../lib/agent-config";
+import { AgentFiles, AgentRuntimeConfig } from "../lib/config";
 import { logInfo } from "../lib/common";
 import {
-  buildAgentJsonForCurrentJob,
+  ensureLinuxAgentRoot,
   ensureLatestBravoLinuxAgent,
   startAgentProcess,
 } from "./agent";
@@ -17,9 +19,12 @@ export async function runLinuxPreJobHook(): Promise<void> {
   }
 
   logInfo("Running Linux agent pre-hook");
-  logInfo("Checking for policy from policy store...");
-  await buildAgentJsonForCurrentJob();
+  ensureLinuxAgentRoot();
+  await buildSharedAgentJsonForCurrentJob({
+    agentJsonPath: AgentFiles.linux.agentJson,
+    isPersistent: !AgentRuntimeConfig.isEphemeralLinux,
+  });
   await ensureLatestBravoLinuxAgent();
   await startAgentProcess();
-  logInfo("Completed successfully");
+  logInfo("Finished Linux agent pre-hook");
 }

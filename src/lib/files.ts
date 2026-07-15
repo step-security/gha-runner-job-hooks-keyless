@@ -56,3 +56,18 @@ export function printFileIfExists(
 
   return true;
 }
+
+export function readCorrelationIdFromAgentJson(filePath: string): string {
+  if (!fs.existsSync(filePath)) {
+    return "";
+  }
+
+  try {
+    const agent = JSON.parse(fs.readFileSync(filePath, "utf8")) as {
+      correlation_id?: unknown;
+    };
+    return typeof agent.correlation_id === "string" ? agent.correlation_id : "";
+  } catch {
+    return "";
+  }
+}
