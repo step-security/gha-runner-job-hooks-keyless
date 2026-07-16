@@ -18,7 +18,8 @@ export async function runWindowsPreJobHook(): Promise<void> {
     agentJsonPath: AgentFiles.windows.agentJson,
     isPersistent: false,
     isGithubHosted: true,
-    isDebug: true
+    isDebug: false,
+    egressPolicyAlwaysAudit: true,
   });
   await installWindowsAgent();
   await startWindowsAgentProcess();
