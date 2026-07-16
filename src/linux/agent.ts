@@ -9,6 +9,12 @@ import {
 } from "../lib/common";
 import { AgentFiles, AgentRuntimeConfig, Urls } from "../lib/config";
 import { readCorrelationIdFromAgentJson } from "../lib/files";
+import {
+  processExists,
+  readPidFile,
+  removePidFile,
+  trySignalProcess,
+} from "../lib/process";
 import { appendJobSummary } from "../lib/summary";
 import {
   downloadAndExtractReleaseAsset,
@@ -145,47 +151,26 @@ function detectAgentBuildInfo(): AgentBuildInfo | null {
   return info;
 }
 
-function readPidFile(): number | null {
-  if (!fs.existsSync(AgentFiles.linux.agentPid)) {
-    return null;
-  }
-
-  const pid = Number.parseInt(
-    fs.readFileSync(AgentFiles.linux.agentPid, "utf8").trim(),
-    10,
-  );
-  return Number.isFinite(pid) && pid > 0 ? pid : null;
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function removePidFile(): void {
-  if (fs.existsSync(AgentFiles.linux.agentPid)) {
-    fs.unlinkSync(AgentFiles.linux.agentPid);
-  }
-}
-
 export function killExistingAgentProcess(): void {
-  const pid = readPidFile();
+  const pid = readPidFile(AgentFiles.linux.agentPid);
   if (!pid) {
     return;
   }
 
   if (!processExists(pid)) {
-    removePidFile();
+    removePidFile(AgentFiles.linux.agentPid);
     return;
   }
 
   logInfo(`Killing existing agent process with SIGKILL: ${pid}`);
-  process.kill(pid, "SIGKILL");
-  removePidFile();
+  const message = trySignalProcess(pid, "SIGKILL");
+  if (message) {
+    logWarning(`Failed to send SIGKILL to agent process ${pid}: ${message}`);
+    if (processExists(pid)) {
+      return;
+    }
+  }
+  removePidFile(AgentFiles.linux.agentPid);
 }
 
 export async function startAgentProcess(): Promise<void> {
@@ -234,7 +219,7 @@ export async function startAgentProcess(): Promise<void> {
 }
 
 export async function stopAgentProcess(): Promise<void> {
-  const pid = readPidFile();
+  const pid = readPidFile(AgentFiles.linux.agentPid);
   if (!pid) {
     logWarning("agent.pid not found");
     return;
@@ -242,20 +227,20 @@ export async function stopAgentProcess(): Promise<void> {
 
   if (!processExists(pid)) {
     logInfo("Agent process is not running");
-    removePidFile();
+    removePidFile(AgentFiles.linux.agentPid);
     return;
   }
 
   logInfo(`Sending SIGTERM to agent process: ${pid}`);
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logWarning(`Failed to send SIGTERM to agent process ${pid}: ${message}`);
-    if (!processExists(pid)) {
-      removePidFile();
+  {
+    const message = trySignalProcess(pid, "SIGTERM");
+    if (message) {
+      logWarning(`Failed to send SIGTERM to agent process ${pid}: ${message}`);
+      if (!processExists(pid)) {
+        removePidFile(AgentFiles.linux.agentPid);
+      }
+      return;
     }
-    return;
   }
 
   const { matched } = await waitForCondition(
@@ -266,7 +251,7 @@ export async function stopAgentProcess(): Promise<void> {
 
   if (matched) {
     logInfo(`Agent process stopped gracefully: ${pid}`);
-    removePidFile();
+    removePidFile(AgentFiles.linux.agentPid);
     return;
   }
 
@@ -275,10 +260,8 @@ export async function stopAgentProcess(): Promise<void> {
   );
 
   if (processExists(pid)) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    const message = trySignalProcess(pid, "SIGKILL");
+    if (message) {
       logWarning(`Failed to send SIGKILL to agent process ${pid}: ${message}`);
     }
   }
@@ -295,7 +278,7 @@ export async function stopAgentProcess(): Promise<void> {
     logWarning(`Agent process is still running after SIGKILL: ${pid}`);
   }
 
-  removePidFile();
+  removePidFile(AgentFiles.linux.agentPid);
 }
 
 export function printLinuxAgentLogs(): void {

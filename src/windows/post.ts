@@ -44,7 +44,7 @@ export async function runWindowsPostJobHook(): Promise<void> {
       "-Command",
       "query user; exit $LASTEXITCODE",
     ],
-    { stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true },
+    { stdio: "ignore", shell: false, windowsHide: true },
   );
   p.unref();
 
