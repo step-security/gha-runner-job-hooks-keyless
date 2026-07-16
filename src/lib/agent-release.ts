@@ -3,6 +3,7 @@ import * as fs from "fs";
 const { createHash } = require("crypto") as typeof import("crypto");
 
 import { downloadFile, logInfo, logWarning } from "./common";
+import { Urls } from "./config";
 
 export type AgentReleaseAsset = {
   asset_name: string;
@@ -48,10 +49,7 @@ export async function downloadReleaseAsset(
   asset: AgentReleaseAsset,
   archivePath: string,
 ): Promise<boolean> {
-  for (const downloadUrl of [
-    asset.primary_download_url,
-    asset.fallback_download_url,
-  ]) {
+  for (const downloadUrl of buildDownloadUrls(asset)) {
     if (!downloadUrl) {
       continue;
     }
@@ -67,4 +65,29 @@ export async function downloadReleaseAsset(
   }
 
   return false;
+}
+
+function buildDownloadUrls(asset: AgentReleaseAsset): string[] {
+  const artifactoryUrl = buildArtifactoryDownloadUrl(asset);
+  if (artifactoryUrl) {
+    return [artifactoryUrl];
+  }
+
+  const urls: string[] = [asset.primary_download_url];
+
+  if (asset.fallback_download_url) {
+    urls.push(asset.fallback_download_url);
+  }
+
+  return Array.from(new Set(urls));
+}
+
+function buildArtifactoryDownloadUrl(asset: AgentReleaseAsset): string {
+  const baseUrl = Urls.agentArtifactoryUrl.trim();
+  if (!baseUrl) {
+    return "";
+  }
+
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
+  return `${normalizedBaseUrl}/${asset.asset_name}`;
 }

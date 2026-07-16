@@ -17,7 +17,9 @@ export const HookModeConfig = {
 export const ApiKeyConfig = {
   envApiKey: process.env.STEP_API_KEY || "",
   roleArn: process.env.STEP_API_KEY_ROLE_ARN || "",
-  secretName: process.env.STEP_API_KEY_SECRET_NAME || "stepsecurity/orgs/<owner>/vm-api-key",
+  secretName:
+    process.env.STEP_API_KEY_SECRET_NAME ||
+    "stepsecurity/orgs/<owner>/vm-api-key",
   secretRegion: process.env.STEP_API_KEY_SECRET_REGION || "us-west-2",
   secretField: process.env.STEP_API_KEY_SECRET_FIELD || "api_key",
 } as const;
@@ -44,7 +46,9 @@ export const AgentFiles = {
 } as const;
 
 export const Urls = {
-  stepSecurityApi: process.env.STEP_API || "https://agent.api.stepsecurity.io/v1",
+  stepSecurityApi:
+    process.env.STEP_API || "https://agent.api.stepsecurity.io/v1",
   stepSecurityTelemetry:
     process.env.STEP_TELEMETRY_URL || "https://prod.app-api.stepsecurity.io/v1",
+  agentArtifactoryUrl: process.env.STEP_AGENT_ARTIFACTORY_URL || "",
 } as const;

@@ -36,6 +36,7 @@ export async function runWindowsPostJobHook(): Promise<void> {
     return;
   }
 
+  logInfo("Sending query user command");
   const p = cp.spawn(
     "powershell.exe",
     [
@@ -48,9 +49,11 @@ export async function runWindowsPostJobHook(): Promise<void> {
   );
   p.unref();
 
+  logInfo("Writing post event json");
   writeWindowsPostEvent();
 
   if (windowsAgentInstalled()) {
+    logInfo("Waiting for done file");
     await waitForWindowsDoneFile();
   }
 

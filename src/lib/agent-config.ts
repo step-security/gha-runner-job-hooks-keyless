@@ -42,6 +42,7 @@ type BuildAgentConfigOptions = {
   isGithubHosted?: boolean;
   workingDirectory?: string;
   isDebug?: boolean;
+  egressPolicyAlwaysAudit?: boolean;
 };
 
 const RuntimeConfig = {
@@ -149,6 +150,11 @@ export async function buildSharedAgentJsonForCurrentJob(
     agentConfig.disable_sudo = config.disableSudo;
     agentConfig.disable_sudo_and_containers = config.disableSudoAndContainers;
     agentConfig.disable_file_monitoring = config.disableFileMonitoring;
+  }
+
+  if (options.egressPolicyAlwaysAudit) {
+    logInfo("Overriding egress_policy to audit for this agent configuration");
+    agentConfig.egress_policy = "audit";
   }
 
   writeJsonFile(

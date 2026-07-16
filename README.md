@@ -123,6 +123,7 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                    |
 | `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                            |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                          |
+| `STEP_AGENT_ARTIFACTORY_URL` | ``                                        | Optional internal Artifactory base URL for agent asset downloads. When set, the hook downloads only `<STEP_AGENT_ARTIFACTORY_URL>/<asset_name>` and does not use the API-provided URLs.                         |
 | `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                   |
 | `STEP_API_KEY_ROLE_ARN`      | ``                                        | IAM role to assume before reading the API key from AWS Secrets Manager.                                                                                                                                            |
 | `STEP_API_KEY_SECRET_NAME`   | `stepsecurity/orgs/<owner>/vm-api-key`    | Secrets Manager secret name. Supports `<owner>` placeholder substitution with the GitHub owner before reading the secret.                                                                                          |
@@ -155,6 +156,41 @@ The secret value must be a JSON object containing the API key field, for example
   "api_key": "your-stepsecurity-api-key"
 }
 ```
+
+### Artifactory
+
+Use `STEP_AGENT_ARTIFACTORY_URL` when hooks must download agent assets from an internal Artifactory location instead of the API-provided URLs.
+
+#### How it works
+
+- When `STEP_AGENT_ARTIFACTORY_URL` is set, the hook downloads assets only from `<STEP_AGENT_ARTIFACTORY_URL>/<asset_name>`.
+- The hook does not use `primary_download_url` or `fallback_download_url` from the API response in this mode.
+- This applies to both Linux and Windows agent asset downloads.
+
+#### How to populate Artifactory
+
+1. Call the StepSecurity release API for the required platform and version:
+   - Linux latest: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/linux/single/releases/latest`
+   - Linux specific version: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/linux/single/releases/<tag>`
+   - Windows latest: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/win/single/releases/latest`
+   - Windows specific version: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/win/single/releases/<tag>`
+2. Inspect the returned `assets` list and identify the files you need.
+3. Open either `primary_download_url` or `fallback_download_url` for each asset and download the archive.
+4. Upload each downloaded archive into your internal Artifactory using the exact filename from `asset_name`.
+5. Set `STEP_AGENT_ARTIFACTORY_URL` on the runner to the Artifactory base URL that serves those uploaded files.
+
+The hook derives the final URL as `<STEP_AGENT_ARTIFACTORY_URL>/<asset_name>`, so the required contract is simple: the internal Artifactory location must serve the same filenames returned by the API.
+
+#### Example
+
+- Linux fallback URL: `https://packages.stepsecurity.io/self-hosted/harden-runner-bravo_1.8.12_linux_arm64.tar.gz`
+- Windows fallback URL: `https://packages.stepsecurity.io/self-hosted/harden-runner-agent-windows_1.0.7_windows_amd64.tar.gz`
+- `STEP_AGENT_ARTIFACTORY_URL=https://artifactory.example.com/self-hosted`
+
+With that configuration, the hook downloads:
+
+- `https://artifactory.example.com/self-hosted/harden-runner-bravo_1.8.12_linux_arm64.tar.gz`
+- `https://artifactory.example.com/self-hosted/harden-runner-agent-windows_1.0.7_windows_amd64.tar.gz`
 
 ## Notes and troubleshooting
 
