@@ -1,9 +1,10 @@
 import { logInfo } from "../lib/common";
+import { AgentFiles } from "../lib/config";
+import { readCorrelationIdFromAgentJson } from "../lib/files";
 import {
   appendLinuxSummary,
   cleanupLinuxJobArtifacts,
   printLinuxAgentLogs,
-  readCorrelationIdFromAgentJson,
   stopAgentProcess,
 } from "./agent";
 import { runK8sPostJobHook } from "./k8s/post";
@@ -19,7 +20,9 @@ export async function runLinuxPostJobHook(): Promise<void> {
   }
 
   logInfo("Running Linux agent post-hook");
-  const correlationId = readCorrelationIdFromAgentJson();
+  const correlationId = readCorrelationIdFromAgentJson(
+    AgentFiles.linux.agentJson,
+  );
   if (correlationId) {
     logInfo(`Found correlation ID from agent.json: ${correlationId}`);
   }
@@ -28,4 +31,5 @@ export async function runLinuxPostJobHook(): Promise<void> {
   await appendLinuxSummary();
   printLinuxAgentLogs();
   cleanupLinuxJobArtifacts();
+  logInfo("Finished Linux agent post-hook");
 }

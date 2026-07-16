@@ -16,57 +16,6 @@ const RuntimeConfig = {
   correlationId: process.env.RUNNER_NAME || "",
 };
 
-async function checkPolicyStatus(
-  owner: string,
-  repo: string,
-  correlationId: string,
-): Promise<"APPLIED" | "NOT_APPLIED" | "SLEEP"> {
-  return fetchWorkflowPolicyStatus({ owner, repo, correlationId });
-}
-
-async function waitForPolicy(
-  owner: string,
-  repo: string,
-  correlationId: string,
-): Promise<void> {
-  const maxPollTimeSeconds = 10;
-  const pollIntervalMs = 1000;
-
-  logInfo("Egress policy is 'block', waiting for policy to be applied...");
-
-  const startTime = Date.now();
-
-  while (true) {
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-
-    if (elapsedSeconds >= maxPollTimeSeconds) {
-      logInfo(
-        `Timeout waiting for policy status after ${elapsedSeconds}s, continuing...`,
-      );
-      break;
-    }
-
-    const status = await checkPolicyStatus(owner, repo, correlationId);
-
-    switch (status) {
-      case "APPLIED":
-        logInfo("Policy applied successfully, continuing execution");
-        return;
-      case "NOT_APPLIED":
-        logInfo(
-          `Policy not yet applied, polling... (${elapsedSeconds}s/${maxPollTimeSeconds}s)`,
-        );
-        await sleep(pollIntervalMs);
-        break;
-      case "SLEEP":
-      default:
-        logInfo("Received SLEEP status, falling back to sleep 10");
-        await sleep(10_000);
-        return;
-    }
-  }
-}
-
 export async function runK8sPreJobHook(): Promise<void> {
   logInfo("PRE-JOB HOOK: Checking for policy from Policy Store...");
 
@@ -84,17 +33,16 @@ export async function runK8sPreJobHook(): Promise<void> {
   if (hasPolicy) {
     logInfo("Policy found, applying policy...");
 
-    const stringToEncode = `${RuntimeConfig.githubRepository}/${RuntimeConfig.workflow}/${RuntimeConfig.runId}/${RuntimeConfig.job}`;
-    const encodedString = toBase64Utf8(stringToEncode);
-    runCommand(echoCommand, [`step_policy_prejob_${encodedString}`], {
-      silent: true,
-    });
+    const policySignal = getPolicySignal();
+    emitPolicySignal(echoCommand, policySignal);
 
     if (shouldSleep) {
       await waitForPolicy(
         RuntimeConfig.owner,
         RuntimeConfig.repo,
         RuntimeConfig.correlationId,
+        policySignal,
+        echoCommand,
       );
     }
   } else {
@@ -102,4 +50,70 @@ export async function runK8sPreJobHook(): Promise<void> {
   }
 
   logInfo("PRE-JOB HOOK: Completed successfully");
+}
+
+async function waitForPolicy(
+  owner: string,
+  repo: string,
+  correlationId: string,
+  policySignal: string,
+  echoCommand: string,
+): Promise<void> {
+  const maxPollTimeSeconds = 10;
+  const pollIntervalMs = 1000;
+
+  logInfo("Egress policy is 'block', waiting for policy to be applied...");
+
+  const startTime = Date.now();
+
+  while (true) {
+    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+
+    if (elapsedSeconds >= maxPollTimeSeconds) {
+      logInfo(
+        `Timeout waiting for policy status after ${elapsedSeconds}s, continuing...`,
+      );
+      return;
+    }
+
+    const status = await checkPolicyStatus(owner, repo, correlationId);
+
+    switch (status) {
+      case "APPLIED":
+        logInfo("Policy applied successfully, continuing execution");
+        return;
+      case "NOT_APPLIED":
+        logInfo(
+          `Policy not yet applied, polling... (${elapsedSeconds}s/${maxPollTimeSeconds}s)`,
+        );
+        emitPolicySignal(echoCommand, policySignal);
+        await sleep(pollIntervalMs);
+        break;
+      case "SLEEP":
+      default:
+        logInfo("Received SLEEP status, falling back to sleep 10");
+        await sleep(10_000);
+        return;
+    }
+  }
+}
+
+async function checkPolicyStatus(
+  owner: string,
+  repo: string,
+  correlationId: string,
+): Promise<"APPLIED" | "NOT_APPLIED" | "SLEEP"> {
+  return fetchWorkflowPolicyStatus({ owner, repo, correlationId });
+}
+
+function getPolicySignal(): string {
+  const stringToEncode = `${RuntimeConfig.githubRepository}/${RuntimeConfig.workflow}/${RuntimeConfig.runId}/${RuntimeConfig.job}`;
+  const encodedString = toBase64Utf8(stringToEncode);
+  return `step_policy_prejob_${encodedString}`;
+}
+
+function emitPolicySignal(echoCommand: string, policySignal: string): void {
+  runCommand(echoCommand, [policySignal], {
+    silent: true,
+  });
 }
