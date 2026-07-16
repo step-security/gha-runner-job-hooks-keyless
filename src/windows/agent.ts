@@ -25,6 +25,12 @@ import {
   runCommand,
   waitForCondition,
 } from "../lib/common";
+import {
+  processExists,
+  readPidFile,
+  removePidFile,
+  trySignalProcess,
+} from "../lib/process";
 
 const WindowsAgentReleaseBaseUrl = `${Urls.stepSecurityApi}/harden-runner-agent/github/win/single/releases`;
 
@@ -73,33 +79,6 @@ async function downloadWindowsAgent(
 ): Promise<void> {
   if (!(await downloadReleaseAsset(asset, archivePath))) {
     throw new Error(`Failed to download Windows agent asset ${asset.asset_name}`);
-  }
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function readPidFile(): number | null {
-  if (!fs.existsSync(AgentFiles.windows.agentPid)) {
-    return null;
-  }
-
-  const pid = Number.parseInt(
-    fs.readFileSync(AgentFiles.windows.agentPid, "utf8").trim(),
-    10,
-  );
-  return Number.isFinite(pid) && pid > 0 ? pid : null;
-}
-
-function removePidFile(): void {
-  if (fs.existsSync(AgentFiles.windows.agentPid)) {
-    fs.unlinkSync(AgentFiles.windows.agentPid);
   }
 }
 
@@ -158,11 +137,17 @@ export async function installWindowsAgent(): Promise<void> {
 }
 
 export async function startWindowsAgentProcess(): Promise<void> {
-  const existingPid = readPidFile();
+  const existingPid = readPidFile(AgentFiles.windows.agentPid);
   if (existingPid && processExists(existingPid)) {
-    process.kill(existingPid, "SIGKILL");
+    const message = trySignalProcess(existingPid, "SIGKILL");
+    if (message) {
+      logWarning(`Failed to send SIGKILL to Windows agent process ${existingPid}: ${message}`);
+      if (processExists(existingPid)) {
+        return;
+      }
+    }
   }
-  removePidFile();
+  removePidFile(AgentFiles.windows.agentPid);
 
   for (const filePath of [
     AgentFiles.windows.agentStatus,
@@ -181,7 +166,7 @@ export async function startWindowsAgentProcess(): Promise<void> {
     cwd: AgentRuntimeConfig.windowsRoot,
     detached: true,
     stdio: ["ignore", logStream, logStream],
-    windowsHide: false,
+    windowsHide: true,
     shell: false,
   });
   agentProcess.unref();
@@ -211,7 +196,7 @@ export async function startWindowsAgentProcess(): Promise<void> {
 }
 
 export async function stopWindowsAgentProcess(): Promise<void> {
-  const pid = readPidFile();
+  const pid = readPidFile(AgentFiles.windows.agentPid);
   if (!pid) {
     logWarning("Windows agent PID file not found");
     return;
@@ -219,19 +204,42 @@ export async function stopWindowsAgentProcess(): Promise<void> {
 
   if (!processExists(pid)) {
     logInfo("Windows agent process is not running");
-    removePidFile();
+    removePidFile(AgentFiles.windows.agentPid);
     return;
   }
 
-  process.kill(pid, "SIGINT");
-  const { matched } = await waitForCondition(() => !processExists(pid), 10, 1000);
-  if (!matched && processExists(pid)) {
-    logWarning("Windows agent graceful shutdown timed out; forcing termination");
-    process.kill(pid, "SIGKILL");
-    await waitForCondition(() => !processExists(pid), 3, 1000);
+  logInfo(`Sending SIGINT to Windows agent process: ${pid}`);
+  {
+    const message = trySignalProcess(pid, "SIGINT");
+    if (message) {
+      logWarning(`Failed to send SIGINT to Windows agent process ${pid}: ${message}`);
+      if (!processExists(pid)) {
+        removePidFile(AgentFiles.windows.agentPid);
+      }
+      return;
+    }
   }
 
-  removePidFile();
+  const { matched } = await waitForCondition(() => !processExists(pid), 10, 1000);
+  if (matched) {
+    logInfo(`Windows agent process stopped gracefully: ${pid}`);
+    removePidFile(AgentFiles.windows.agentPid);
+    return;
+  }
+
+  logWarning("Windows agent graceful shutdown timed out; forcing termination");
+
+  if (processExists(pid)) {
+    const message = trySignalProcess(pid, "SIGKILL");
+    if (message) {
+      logWarning(`Failed to send SIGKILL to Windows agent process ${pid}: ${message}`);
+    }
+  }
+
+  const { matched: killed } = await waitForCondition(() => !processExists(pid), 3, 1000);
+  if (killed || !processExists(pid)) {
+    removePidFile(AgentFiles.windows.agentPid);
+  }
 }
 
 export async function waitForWindowsDoneFile(): Promise<void> {

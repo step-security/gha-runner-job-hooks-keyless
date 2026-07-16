@@ -9,6 +9,10 @@ import {
 
 export async function runWindowsPreJobHook(): Promise<void> {
   logInfo("Running Windows agent pre-hook");
+  if (process.arch === "arm64") {
+    logInfo("Windows arm64 runners are not supported");
+    return;
+  }
   ensureWindowsAgentRoot();
   await buildSharedAgentJsonForCurrentJob({
     agentJsonPath: AgentFiles.windows.agentJson,
