@@ -157,6 +157,11 @@ The secret value must be a JSON object containing the API key field, for example
 }
 ```
 
+For more on managing the API key, see:
+
+- [StepSecurity API Key Rotation](docs/key-rotation-flow-generic.md) — how to rotate StepSecurity API keys on a regular schedule with zero downtime, for both VM runners and Kubernetes runners (ARC).
+- [Kubernetes ARC Harden-Runner: Keyless API Key Setup](docs/k8s-keyless-mode-customer-setup.md) — one-time AWS and Helm setup to enable keyless mode for Kubernetes runners (ARC).
+
 ### Artifactory
 
 Use `STEP_AGENT_ARTIFACTORY_URL` when hooks must download agent assets from an internal Artifactory location instead of the API-provided URLs.
