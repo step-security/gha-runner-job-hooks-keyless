@@ -2,8 +2,17 @@ import * as fs from "fs";
 import * as path from "path";
 
 import {
+  assetChecksumSha256,
+  downloadArtifact,
+  isArtifactoryConfigured,
+  readCurrentSha256,
+  resolveServingArtifactByProperties,
+  writeCurrentSha256,
+} from "../lib/artifactory";
+import {
   AgentFiles,
   AgentRuntimeConfig,
+  ArtifactoryConfig,
   Urls,
   WindowsAgentReleaseConfig,
 } from "../lib/config";
@@ -41,6 +50,25 @@ export function ensureWindowsAgentRoot(): void {
 }
 
 async function fetchWindowsAgentRelease(): Promise<AgentRelease> {
+  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+    try {
+      return await fetchWindowsAgentReleaseFromArtifactory();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logWarning(`Failed to resolve Artifactory agent release: ${message}`);
+      if (fs.existsSync(AgentFiles.windows.agentBinary)) {
+        logWarning(
+          `Unable to resolve the current Artifactory-served agent; continuing with existing agent binary at ${AgentFiles.windows.agentBinary}`,
+        );
+      } else {
+        logWarning(
+          `Unable to resolve the current Artifactory-served agent and no existing agent binary is available at ${AgentFiles.windows.agentBinary}`,
+        );
+      }
+      throw error;
+    }
+  }
+
   const releaseUrl =
     WindowsAgentReleaseConfig.windowsAgentVersion === "latest"
       ? `${WindowsAgentReleaseBaseUrl}/latest`
@@ -63,6 +91,26 @@ async function fetchWindowsAgentRelease(): Promise<AgentRelease> {
   return release;
 }
 
+async function fetchWindowsAgentReleaseFromArtifactory(): Promise<AgentRelease> {
+  const serving = await resolveServingArtifactByProperties(ArtifactoryConfig, {
+    "ss.serving": "true",
+    "ss.approved": "true",
+    "ss.os": "windows",
+    "ss.arch": "amd64",
+  });
+
+  return {
+    tag: serving.version,
+    assets: [
+      {
+        asset_name: serving.name,
+        checksum: `sha256:${serving.sha256}`,
+        primary_download_url: serving.url,
+      },
+    ],
+  };
+}
+
 function selectWindowsAgentAsset(
   release: AgentRelease,
 ): AgentReleaseAsset | null {
@@ -75,8 +123,25 @@ function selectWindowsAgentAsset(
 
 async function downloadWindowsAgent(
   asset: AgentReleaseAsset,
+  releaseVersion: string,
   archivePath: string,
 ): Promise<void> {
+  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+    const downloaded = await downloadArtifact(
+      {
+        version: releaseVersion,
+        name: asset.asset_name,
+        sha256: assetChecksumSha256(asset.checksum),
+        url: asset.primary_download_url,
+      },
+      archivePath,
+    );
+    if (!downloaded) {
+      throw new Error(`Failed to download Windows agent asset ${asset.asset_name}`);
+    }
+    return;
+  }
+
   if (!(await downloadReleaseAsset(asset, archivePath))) {
     throw new Error(`Failed to download Windows agent asset ${asset.asset_name}`);
   }
@@ -100,13 +165,6 @@ export async function installWindowsAgent(): Promise<void> {
     throw new Error("Windows arm64 runners are not supported");
   }
 
-  if (fs.existsSync(AgentFiles.windows.agentBinary)) {
-    logInfo(
-      `Windows agent already installed at ${AgentFiles.windows.agentBinary}; skipping reinstall`,
-    );
-    return;
-  }
-
   const archivePath = path.join(
     AgentRuntimeConfig.windowsRoot,
     "windows-agent.tar.gz",
@@ -118,7 +176,26 @@ export async function installWindowsAgent(): Promise<void> {
   if (!asset) {
     throw new Error(`No matching Windows agent release asset found for ${release.tag}`);
   }
-  await downloadWindowsAgent(asset, archivePath);
+
+  const expectedSha256 = assetChecksumSha256(asset.checksum);
+  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+    const currentSha256 = readCurrentSha256(AgentFiles.windows.currentSha256);
+    if (
+      expectedSha256 &&
+      currentSha256 === expectedSha256 &&
+      fs.existsSync(AgentFiles.windows.agentBinary)
+    ) {
+      logInfo(`Windows agent already at serving sha ${expectedSha256}`);
+      return;
+    }
+  } else if (fs.existsSync(AgentFiles.windows.agentBinary)) {
+    logInfo(
+      `Windows agent already installed at ${AgentFiles.windows.agentBinary}; skipping reinstall`,
+    );
+    return;
+  }
+
+  await downloadWindowsAgent(asset, release.tag, archivePath);
   if (!verifyReleaseChecksum(archivePath, asset)) {
     throw new Error(`Checksum validation failed for ${asset.asset_name}`);
   }
@@ -132,6 +209,9 @@ export async function installWindowsAgent(): Promise<void> {
   }
 
   fs.copyFileSync(extractedAgentPath, AgentFiles.windows.agentBinary);
+  if (expectedSha256) {
+    writeCurrentSha256(AgentFiles.windows.currentSha256, expectedSha256);
+  }
   fs.rmSync(extractPath, { recursive: true, force: true });
   removeIfExists(archivePath);
 }

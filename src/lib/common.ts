@@ -185,12 +185,22 @@ export async function waitForFile(
 }
 
 export function handleFatalError(error: unknown): never {
-  const message =
-    error instanceof Error && error.stack
-      ? error.stack
-      : error instanceof Error && error.message
-        ? error.message
-        : String(error);
-  logError(message);
+  if (error instanceof Error) {
+    const label = error.name || "Error";
+    logError(`[${label}] ${error.message}`);
+    if (error.stack) {
+      console.error(error.stack);
+    }
+    if ("cause" in error && error.cause) {
+      const cause =
+        error.cause instanceof Error && error.cause.stack
+          ? error.cause.stack
+          : String(error.cause);
+      logError(`Cause: ${cause}`);
+    }
+  } else {
+    logError(String(error));
+  }
+
   process.exit(0);
 }

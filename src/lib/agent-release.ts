@@ -17,7 +17,7 @@ export type AgentRelease = {
   assets: AgentReleaseAsset[];
 };
 
-function computeSha256(filePath: string): string {
+export function computeSha256(filePath: string): string {
   const hash = createHash("sha256");
   hash.update(fs.readFileSync(filePath));
   return hash.digest("hex");

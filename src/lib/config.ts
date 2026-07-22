@@ -33,6 +33,7 @@ export const AgentFiles = {
     agentLog: `${AgentRuntimeConfig.linuxRoot}/agent.log`,
     agentStdout: `${AgentRuntimeConfig.linuxRoot}/agent.stdout`,
     agentPid: `${AgentRuntimeConfig.linuxRoot}/agent.pid`,
+    currentSha256: `${AgentRuntimeConfig.linuxRoot}/.current_sha256`,
   },
   windows: {
     agentJson: `${AgentRuntimeConfig.windowsRoot}\\config.json`,
@@ -42,6 +43,7 @@ export const AgentFiles = {
     agentLog: `${AgentRuntimeConfig.windowsRoot}\\agent.log`,
     agentPid: `${AgentRuntimeConfig.windowsRoot}\\agent.pid`,
     postEvent: `${AgentRuntimeConfig.windowsRoot}\\post_event.json`,
+    currentSha256: `${AgentRuntimeConfig.windowsRoot}\\.current_sha256`,
   },
 } as const;
 
@@ -50,5 +52,10 @@ export const Urls = {
     process.env.STEP_API || "https://agent.api.stepsecurity.io/v1",
   stepSecurityTelemetry:
     process.env.STEP_TELEMETRY_URL || "https://prod.app-api.stepsecurity.io/v1",
-  agentArtifactoryUrl: process.env.STEP_AGENT_ARTIFACTORY_URL || "",
+  agentArtifactoryUrl: process.env.STEP_AGENT_ARTIFACTORY_URL || "", // TODO: remove functionality related to this
+} as const;
+
+export const ArtifactoryConfig = {
+  base: process.env.STEP_ARTIFACTORY_BASE || process.env.ARTIFACTORY_BASE || "",
+  repo: process.env.STEP_ARTIFACTORY_REPO || process.env.ARTIFACTORY_REPO || "",
 } as const;
