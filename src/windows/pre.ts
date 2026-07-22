@@ -1,6 +1,7 @@
 import { buildSharedAgentJsonForCurrentJob } from "../lib/agent-config";
 import { logInfo } from "../lib/common";
 import { AgentFiles } from "../lib/config";
+import { runConfiguredEndpointPreflight } from "../lib/preflight";
 import {
   ensureWindowsAgentRoot,
   installWindowsAgent,
@@ -13,6 +14,7 @@ export async function runWindowsPreJobHook(): Promise<void> {
     logInfo("Windows arm64 runners are not supported");
     return;
   }
+  await runConfiguredEndpointPreflight({ requireVmApiKey: true });
   ensureWindowsAgentRoot();
   await buildSharedAgentJsonForCurrentJob({
     agentJsonPath: AgentFiles.windows.agentJson,

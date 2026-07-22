@@ -1,10 +1,9 @@
 import * as fs from "fs";
 import * as cp from "child_process";
 
-import { logInfo } from "../lib/common";
-import {
-  AgentRuntimeConfig,
-} from "../lib/config";
+import { logInfo, logWarning } from "../lib/common";
+import { AgentFiles, AgentRuntimeConfig } from "../lib/config";
+import { isAgentRunning } from "../lib/process";
 import {
   appendWindowsSummary,
   cleanupWindowsJobArtifacts,
@@ -33,6 +32,12 @@ export async function runWindowsPostJobHook(): Promise<void> {
 
   if (process.arch === "arm64") {
     logInfo("Windows arm64 runners are not supported");
+    return;
+  }
+
+  if (!isAgentRunning(AgentFiles.windows.agentPid)) {
+    logWarning("Skipping summary because Windows agent PID file was not found");
+    cleanupWindowsJobArtifacts();
     return;
   }
 

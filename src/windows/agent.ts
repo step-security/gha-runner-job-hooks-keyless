@@ -2,8 +2,17 @@ import * as fs from "fs";
 import * as path from "path";
 
 import {
+  assetChecksumSha256,
+  downloadArtifact,
+  isArtifactoryConfigured,
+  readCurrentSha256,
+  resolveServingArtifactByProperties,
+  writeCurrentSha256,
+} from "../lib/artifactory";
+import {
   AgentFiles,
   AgentRuntimeConfig,
+  ArtifactoryConfig,
   Urls,
   WindowsAgentReleaseConfig,
 } from "../lib/config";
@@ -40,45 +49,105 @@ export function ensureWindowsAgentRoot(): void {
   }
 }
 
-async function fetchWindowsAgentRelease(): Promise<AgentRelease> {
+async function fetchWindowsAgentRelease(): Promise<AgentRelease | null> {
   const releaseUrl =
     WindowsAgentReleaseConfig.windowsAgentVersion === "latest"
       ? `${WindowsAgentReleaseBaseUrl}/latest`
       : `${WindowsAgentReleaseBaseUrl}/${encodeURIComponent(WindowsAgentReleaseConfig.windowsAgentVersion)}`;
 
-  const { statusCode, body } = await getWithRetry(new URL(releaseUrl), {
-    Accept: "application/json",
-    "User-Agent": "stepsecurity-jobhooks",
-  });
+  try {
+    const { statusCode, body } = await getWithRetry(new URL(releaseUrl), {
+      Accept: "application/json",
+      "User-Agent": "stepsecurity-jobhooks",
+    });
 
-  if (String(statusCode) !== "200") {
-    throw new Error(`Failed to fetch Windows agent release: status ${statusCode}`);
+    if (String(statusCode) !== "200") {
+      throw new Error(
+        `Failed to fetch Windows agent release: status ${statusCode}`,
+      );
+    }
+
+    const release = JSON.parse(body) as AgentRelease;
+    if (!release.tag || !Array.isArray(release.assets)) {
+      throw new Error(
+        "Windows agent release response is missing expected fields",
+      );
+    }
+
+    return release;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Failed to fetch Windows agent release: ${message}`);
+    return null;
   }
+}
 
-  const release = JSON.parse(body) as AgentRelease;
-  if (!release.tag || !Array.isArray(release.assets)) {
-    throw new Error("Windows agent release response is missing expected fields");
+async function fetchWindowsAgentReleaseFromArtifactory(): Promise<AgentRelease | null> {
+  try {
+    const serving = await resolveServingArtifactByProperties(
+      ArtifactoryConfig,
+      {
+        "ss.serving": "true",
+        "ss.approved": "true",
+        "ss.os": "windows",
+        "ss.arch": "amd64",
+      },
+    );
+
+    return {
+      tag: serving.version,
+      assets: [
+        {
+          asset_name: serving.name,
+          checksum: `sha256:${serving.sha256}`,
+          primary_download_url: serving.url,
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Failed to resolve Artifactory agent release: ${message}`);
+    return null;
   }
-
-  return release;
 }
 
 function selectWindowsAgentAsset(
   release: AgentRelease,
 ): AgentReleaseAsset | null {
   return (
-    release.assets.find(
-      (asset) => asset.asset_name.includes("windows_amd64.tar.gz"),
+    release.assets.find((asset) =>
+      asset.asset_name.includes("windows_amd64.tar.gz"),
     ) || null
   );
 }
 
 async function downloadWindowsAgent(
   asset: AgentReleaseAsset,
+  releaseVersion: string,
   archivePath: string,
 ): Promise<void> {
+  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+    const downloaded = await downloadArtifact(
+      {
+        version: releaseVersion,
+        name: asset.asset_name,
+        sha256: assetChecksumSha256(asset.checksum),
+        url: asset.primary_download_url,
+      },
+      archivePath,
+    );
+    if (!downloaded) {
+      throw new Error(
+        `Failed to download Windows agent asset ${asset.asset_name}`,
+      );
+    }
+    return;
+  }
+
   if (!(await downloadReleaseAsset(asset, archivePath))) {
-    throw new Error(`Failed to download Windows agent asset ${asset.asset_name}`);
+    throw new Error(
+      `Failed to download Windows agent asset ${asset.asset_name}`,
+    );
   }
 }
 
@@ -100,25 +169,47 @@ export async function installWindowsAgent(): Promise<void> {
     throw new Error("Windows arm64 runners are not supported");
   }
 
-  if (fs.existsSync(AgentFiles.windows.agentBinary)) {
-    logInfo(
-      `Windows agent already installed at ${AgentFiles.windows.agentBinary}; skipping reinstall`,
-    );
-    return;
-  }
-
   const archivePath = path.join(
     AgentRuntimeConfig.windowsRoot,
     "windows-agent.tar.gz",
   );
   const extractPath = path.join(AgentRuntimeConfig.windowsRoot, "extract");
 
-  const release = await fetchWindowsAgentRelease();
+  const useArtifactory = isArtifactoryConfigured(ArtifactoryConfig);
+  const release = useArtifactory
+    ? await fetchWindowsAgentReleaseFromArtifactory()
+    : await fetchWindowsAgentRelease();
+  if (!release) {
+    logUnavailableWindowsReleaseWarning(useArtifactory);
+    return;
+  }
+
   const asset = selectWindowsAgentAsset(release);
   if (!asset) {
-    throw new Error(`No matching Windows agent release asset found for ${release.tag}`);
+    throw new Error(
+      `No matching Windows agent release asset found for ${release.tag}`,
+    );
   }
-  await downloadWindowsAgent(asset, archivePath);
+
+  const expectedSha256 = assetChecksumSha256(asset.checksum);
+  if (useArtifactory) {
+    const currentSha256 = readCurrentSha256(AgentFiles.windows.currentSha256);
+    if (
+      expectedSha256 &&
+      currentSha256 === expectedSha256 &&
+      fs.existsSync(AgentFiles.windows.agentBinary)
+    ) {
+      logInfo(`Windows agent already at serving sha ${expectedSha256}`);
+      return;
+    }
+  } else if (fs.existsSync(AgentFiles.windows.agentBinary)) {
+    logInfo(
+      `Windows agent already installed at ${AgentFiles.windows.agentBinary}; skipping reinstall`,
+    );
+    return;
+  }
+
+  await downloadWindowsAgent(asset, release.tag, archivePath);
   if (!verifyReleaseChecksum(archivePath, asset)) {
     throw new Error(`Checksum validation failed for ${asset.asset_name}`);
   }
@@ -132,8 +223,28 @@ export async function installWindowsAgent(): Promise<void> {
   }
 
   fs.copyFileSync(extractedAgentPath, AgentFiles.windows.agentBinary);
+  if (expectedSha256) {
+    writeCurrentSha256(AgentFiles.windows.currentSha256, expectedSha256);
+  }
   fs.rmSync(extractPath, { recursive: true, force: true });
   removeIfExists(archivePath);
+}
+
+function logUnavailableWindowsReleaseWarning(useArtifactory: boolean): void {
+  const resolvedFrom = useArtifactory
+    ? "Artifactory-served agent"
+    : "release API";
+
+  if (fs.existsSync(AgentFiles.windows.agentBinary)) {
+    logWarning(
+      `Unable to resolve the current ${resolvedFrom}; continuing with existing agent binary at ${AgentFiles.windows.agentBinary}`,
+    );
+    return;
+  }
+
+  logWarning(
+    `Unable to resolve the current ${resolvedFrom} and no existing agent binary is available at ${AgentFiles.windows.agentBinary}`,
+  );
 }
 
 export async function startWindowsAgentProcess(): Promise<void> {
@@ -141,7 +252,9 @@ export async function startWindowsAgentProcess(): Promise<void> {
   if (existingPid && processExists(existingPid)) {
     const message = trySignalProcess(existingPid, "SIGKILL");
     if (message) {
-      logWarning(`Failed to send SIGKILL to Windows agent process ${existingPid}: ${message}`);
+      logWarning(
+        `Failed to send SIGKILL to Windows agent process ${existingPid}: ${message}`,
+      );
       if (processExists(existingPid)) {
         return;
       }
@@ -159,6 +272,12 @@ export async function startWindowsAgentProcess(): Promise<void> {
     removeIfExists(filePath);
   }
 
+  if (!fs.existsSync(AgentFiles.windows.agentBinary)) {
+    throw new Error(
+      `Agent binary is missing: ${AgentFiles.windows.agentBinary}`,
+    );
+  }
+
   const logStream = fs.openSync(AgentFiles.windows.agentLog, "a");
   const childProcess =
     require("child_process") as typeof import("child_process");
@@ -171,7 +290,11 @@ export async function startWindowsAgentProcess(): Promise<void> {
   });
   agentProcess.unref();
 
-  fs.writeFileSync(AgentFiles.windows.agentPid, `${agentProcess.pid}\n`, "utf8");
+  fs.writeFileSync(
+    AgentFiles.windows.agentPid,
+    `${agentProcess.pid}\n`,
+    "utf8",
+  );
   logInfo(`Windows agent process started with PID: ${agentProcess.pid}`);
 
   const { matched } = await waitForCondition(
@@ -212,7 +335,9 @@ export async function stopWindowsAgentProcess(): Promise<void> {
   {
     const message = trySignalProcess(pid, "SIGINT");
     if (message) {
-      logWarning(`Failed to send SIGINT to Windows agent process ${pid}: ${message}`);
+      logWarning(
+        `Failed to send SIGINT to Windows agent process ${pid}: ${message}`,
+      );
       if (!processExists(pid)) {
         removePidFile(AgentFiles.windows.agentPid);
       }
@@ -220,7 +345,11 @@ export async function stopWindowsAgentProcess(): Promise<void> {
     }
   }
 
-  const { matched } = await waitForCondition(() => !processExists(pid), 10, 1000);
+  const { matched } = await waitForCondition(
+    () => !processExists(pid),
+    10,
+    1000,
+  );
   if (matched) {
     logInfo(`Windows agent process stopped gracefully: ${pid}`);
     removePidFile(AgentFiles.windows.agentPid);
@@ -232,11 +361,17 @@ export async function stopWindowsAgentProcess(): Promise<void> {
   if (processExists(pid)) {
     const message = trySignalProcess(pid, "SIGKILL");
     if (message) {
-      logWarning(`Failed to send SIGKILL to Windows agent process ${pid}: ${message}`);
+      logWarning(
+        `Failed to send SIGKILL to Windows agent process ${pid}: ${message}`,
+      );
     }
   }
 
-  const { matched: killed } = await waitForCondition(() => !processExists(pid), 3, 1000);
+  const { matched: killed } = await waitForCondition(
+    () => !processExists(pid),
+    3,
+    1000,
+  );
   if (killed || !processExists(pid)) {
     removePidFile(AgentFiles.windows.agentPid);
   }
