@@ -22,13 +22,14 @@ export class HookConfigurationError extends Error {
 
 type ConfiguredEndpointPreflightOptions = {
   requireVmApiKey?: boolean;
+  stepSecurityApiOnly?: boolean;
 };
 
 export async function runConfiguredEndpointPreflight(
   options: ConfiguredEndpointPreflightOptions = {},
 ): Promise<void> {
   const configFailures = collectConfigFailures(options);
-  const endpoints = collectConfiguredEndpoints();
+  const endpoints = collectConfiguredEndpoints(options);
 
   logInfo(
     `Endpoint preflight checking ${endpoints.length} configured endpoint(s)`,
@@ -86,11 +87,21 @@ function collectConfigFailures(
   return failures;
 }
 
-function collectConfiguredEndpoints(): Array<{ label: string; url: string }> {
+function collectConfiguredEndpoints(
+  options: ConfiguredEndpointPreflightOptions,
+): Array<{ label: string; url: string }> {
   const endpoints: Array<{ label: string; url: string }> = [
     { label: "StepSecurity API", url: Urls.stepSecurityApi },
-    { label: "StepSecurity telemetry API", url: Urls.stepSecurityTelemetry },
   ];
+
+  if (options.stepSecurityApiOnly) {
+    return dedupeEndpoints(endpoints);
+  }
+
+  endpoints.push({
+    label: "StepSecurity telemetry API",
+    url: Urls.stepSecurityTelemetry,
+  });
 
   if (ArtifactoryConfig.base.trim()) {
     endpoints.push({

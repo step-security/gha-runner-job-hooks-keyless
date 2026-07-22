@@ -7,7 +7,7 @@ import { runWindowsPostJobHook } from "./windows/post";
 
 async function main(): Promise<void> {
   console.log("[StepSecurity] post job-hook");
-  await runConfiguredEndpointPreflight();
+  await runConfiguredEndpointPreflight({ stepSecurityApiOnly: true });
 
   if (process.platform === "linux") {
     await runLinuxPostJobHook();
