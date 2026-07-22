@@ -75,7 +75,7 @@ making the call. Therefore:
 6. On startup, and every few hours after, the agent reads the API key from
    the secret. The refreshed key takes effect immediately, with no restarts.
 
-```
+```mermaid
 sequenceDiagram
     participant Pod as Harden-Runner pod (DevOps cluster)<br/>(SA: hardenrunner)
     participant STS as AWS STS
