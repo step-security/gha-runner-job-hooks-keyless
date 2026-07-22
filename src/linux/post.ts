@@ -1,6 +1,7 @@
-import { logInfo } from "../lib/common";
+import { logInfo, logWarning } from "../lib/common";
 import { AgentFiles } from "../lib/config";
 import { readCorrelationIdFromAgentJson } from "../lib/files";
+import { isAgentRunning } from "../lib/process";
 import {
   appendLinuxSummary,
   cleanupLinuxJobArtifacts,
@@ -16,6 +17,12 @@ export async function runLinuxPostJobHook(): Promise<void> {
   if (mode === "k8s") {
     logInfo("Running Kubernetes post-hook");
     await runK8sPostJobHook();
+    return;
+  }
+
+  if (!isAgentRunning(AgentFiles.linux.agentPid)) {
+    logWarning("Skipping summary because agent.pid was not found");
+    cleanupLinuxJobArtifacts();
     return;
   }
 
