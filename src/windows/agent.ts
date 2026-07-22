@@ -49,70 +49,66 @@ export function ensureWindowsAgentRoot(): void {
   }
 }
 
-async function fetchWindowsAgentRelease(): Promise<AgentRelease> {
-  if (isArtifactoryConfigured(ArtifactoryConfig)) {
-    try {
-      return await fetchWindowsAgentReleaseFromArtifactory();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logWarning(`Failed to resolve Artifactory agent release: ${message}`);
-      if (fs.existsSync(AgentFiles.windows.agentBinary)) {
-        logWarning(
-          `Unable to resolve the current Artifactory-served agent; continuing with existing agent binary at ${AgentFiles.windows.agentBinary}`,
-        );
-      } else {
-        logWarning(
-          `Unable to resolve the current Artifactory-served agent and no existing agent binary is available at ${AgentFiles.windows.agentBinary}`,
-        );
-      }
-      throw error;
-    }
-  }
-
+async function fetchWindowsAgentRelease(): Promise<AgentRelease | null> {
   const releaseUrl =
     WindowsAgentReleaseConfig.windowsAgentVersion === "latest"
       ? `${WindowsAgentReleaseBaseUrl}/latest`
       : `${WindowsAgentReleaseBaseUrl}/${encodeURIComponent(WindowsAgentReleaseConfig.windowsAgentVersion)}`;
 
-  const { statusCode, body } = await getWithRetry(new URL(releaseUrl), {
-    Accept: "application/json",
-    "User-Agent": "stepsecurity-jobhooks",
-  });
+  try {
+    const { statusCode, body } = await getWithRetry(new URL(releaseUrl), {
+      Accept: "application/json",
+      "User-Agent": "stepsecurity-jobhooks",
+    });
 
-  if (String(statusCode) !== "200") {
-    throw new Error(
-      `Failed to fetch Windows agent release: status ${statusCode}`,
-    );
+    if (String(statusCode) !== "200") {
+      throw new Error(
+        `Failed to fetch Windows agent release: status ${statusCode}`,
+      );
+    }
+
+    const release = JSON.parse(body) as AgentRelease;
+    if (!release.tag || !Array.isArray(release.assets)) {
+      throw new Error(
+        "Windows agent release response is missing expected fields",
+      );
+    }
+
+    return release;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Failed to fetch Windows agent release: ${message}`);
+    return null;
   }
-
-  const release = JSON.parse(body) as AgentRelease;
-  if (!release.tag || !Array.isArray(release.assets)) {
-    throw new Error(
-      "Windows agent release response is missing expected fields",
-    );
-  }
-
-  return release;
 }
 
-async function fetchWindowsAgentReleaseFromArtifactory(): Promise<AgentRelease> {
-  const serving = await resolveServingArtifactByProperties(ArtifactoryConfig, {
-    "ss.serving": "true",
-    "ss.approved": "true",
-    "ss.os": "windows",
-    "ss.arch": "amd64",
-  });
-
-  return {
-    tag: serving.version,
-    assets: [
+async function fetchWindowsAgentReleaseFromArtifactory(): Promise<AgentRelease | null> {
+  try {
+    const serving = await resolveServingArtifactByProperties(
+      ArtifactoryConfig,
       {
-        asset_name: serving.name,
-        checksum: `sha256:${serving.sha256}`,
-        primary_download_url: serving.url,
+        "ss.serving": "true",
+        "ss.approved": "true",
+        "ss.os": "windows",
+        "ss.arch": "amd64",
       },
-    ],
-  };
+    );
+
+    return {
+      tag: serving.version,
+      assets: [
+        {
+          asset_name: serving.name,
+          checksum: `sha256:${serving.sha256}`,
+          primary_download_url: serving.url,
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Failed to resolve Artifactory agent release: ${message}`);
+    return null;
+  }
 }
 
 function selectWindowsAgentAsset(
@@ -179,7 +175,15 @@ export async function installWindowsAgent(): Promise<void> {
   );
   const extractPath = path.join(AgentRuntimeConfig.windowsRoot, "extract");
 
-  const release = await fetchWindowsAgentRelease();
+  const useArtifactory = isArtifactoryConfigured(ArtifactoryConfig);
+  const release = useArtifactory
+    ? await fetchWindowsAgentReleaseFromArtifactory()
+    : await fetchWindowsAgentRelease();
+  if (!release) {
+    logUnavailableWindowsReleaseWarning(useArtifactory);
+    return;
+  }
+
   const asset = selectWindowsAgentAsset(release);
   if (!asset) {
     throw new Error(
@@ -188,7 +192,7 @@ export async function installWindowsAgent(): Promise<void> {
   }
 
   const expectedSha256 = assetChecksumSha256(asset.checksum);
-  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+  if (useArtifactory) {
     const currentSha256 = readCurrentSha256(AgentFiles.windows.currentSha256);
     if (
       expectedSha256 &&
@@ -224,6 +228,23 @@ export async function installWindowsAgent(): Promise<void> {
   }
   fs.rmSync(extractPath, { recursive: true, force: true });
   removeIfExists(archivePath);
+}
+
+function logUnavailableWindowsReleaseWarning(useArtifactory: boolean): void {
+  const resolvedFrom = useArtifactory
+    ? "Artifactory-served agent"
+    : "release API";
+
+  if (fs.existsSync(AgentFiles.windows.agentBinary)) {
+    logWarning(
+      `Unable to resolve the current ${resolvedFrom}; continuing with existing agent binary at ${AgentFiles.windows.agentBinary}`,
+    );
+    return;
+  }
+
+  logWarning(
+    `Unable to resolve the current ${resolvedFrom} and no existing agent binary is available at ${AgentFiles.windows.agentBinary}`,
+  );
 }
 
 export async function startWindowsAgentProcess(): Promise<void> {
