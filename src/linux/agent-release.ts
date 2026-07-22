@@ -69,7 +69,6 @@ export async function fetchAgentReleaseFromArtifactory(): Promise<AgentRelease |
       ArtifactoryConfig,
       {
         "ss.serving": "true",
-        "ss.approved": "true",
         "ss.os": "linux",
         "ss.arch": arch,
       },
