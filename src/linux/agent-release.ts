@@ -7,7 +7,6 @@ import {
 } from "../lib/common";
 import {
   downloadArtifact,
-  isArtifactoryConfigured,
   resolveServingArtifactByProperties,
 } from "../lib/artifactory";
 import { ArtifactoryConfig, Urls } from "../lib/config";
@@ -15,7 +14,6 @@ import {
   AgentRelease,
   AgentReleaseAsset,
   downloadReleaseAsset,
-  verifyReleaseChecksum,
 } from "../lib/agent-release";
 
 const AgentReleaseArtifactPrefix = "harden-runner-bravo";
@@ -25,13 +23,6 @@ const AgentReleaseBaseUrl = `${Urls.stepSecurityApi}/harden-runner-agent/github/
 export async function fetchAgentRelease(
   versionSelector: string,
 ): Promise<AgentRelease | null> {
-
-
-  
-  if (isArtifactoryConfigured(ArtifactoryConfig)) {
-    return fetchAgentReleaseFromArtifactory();
-  }
-
   const releaseUrl =
     versionSelector === "latest"
       ? `${AgentReleaseBaseUrl}/latest`
@@ -66,7 +57,7 @@ export async function fetchAgentRelease(
   }
 }
 
-async function fetchAgentReleaseFromArtifactory(): Promise<AgentRelease | null> {
+export async function fetchAgentReleaseFromArtifactory(): Promise<AgentRelease | null> {
   const arch = getAgentArch();
   if (!arch) {
     logWarning(`Unsupported agent architecture: ${process.arch}`);
@@ -114,68 +105,38 @@ export function selectAgentReleaseAsset(
   );
 }
 
-function extractReleaseAsset(
-  archivePath: string,
-  destinationDir: string,
-): boolean {
-  const extractResult = runCommand("sudo", [
-    "tar",
-    "-xzf",
-    archivePath,
-    "-C",
-    destinationDir,
-  ]);
-  logCommandFailure(`Extracting ${archivePath}`, extractResult);
-  return Boolean(extractResult && extractResult.status === 0);
-}
-
-function cleanupArchive(archivePath: string): void {
-  const cleanupResult = runCommand("rm", ["-f", archivePath], { silent: true });
-  logCommandFailure(`Removing ${archivePath}`, cleanupResult);
-}
-
-export async function downloadAndExtractReleaseAsset(
+export async function downloadLinuxAgentFromArtifactory(
   asset: AgentReleaseAsset,
   releaseVersion: string,
-  destinationDir: string,
+  archivePath: string,
 ): Promise<void> {
-  const archivePath = `/tmp/${asset.asset_name}`;
-  if (isArtifactoryConfigured(ArtifactoryConfig)) {
-    const checksum = asset.checksum || "";
-    const sha256 = checksum.startsWith("sha256:")
-      ? checksum.slice("sha256:".length)
-      : "";
-    const downloaded = await downloadArtifact(
-      {
-        version: releaseVersion,
-        name: asset.asset_name,
-        sha256,
-        url: asset.primary_download_url,
-      },
-      archivePath,
+  const checksum = asset.checksum || "";
+  const sha256 = checksum.startsWith("sha256:")
+    ? checksum.slice("sha256:".length)
+    : "";
+  const downloaded = await downloadArtifact(
+    {
+      version: releaseVersion,
+      name: asset.asset_name,
+      sha256,
+      url: asset.primary_download_url,
+    },
+    archivePath,
+  );
+  if (!downloaded) {
+    throw new Error(
+      `Failed to download ${asset.asset_name} from Artifactory`,
     );
-    if (!downloaded) {
-      throw new Error(`Failed to download ${asset.asset_name} from Artifactory`);
-    }
-  } else if (!(await downloadReleaseAsset(asset, archivePath))) {
+  }
+}
+
+export async function downloadLinuxAgentFromRelease(
+  asset: AgentReleaseAsset,
+  archivePath: string,
+): Promise<void> {
+  if (!(await downloadReleaseAsset(asset, archivePath))) {
     throw new Error(`Failed to download ${asset.asset_name}`);
   }
-
-  if (
-    !isArtifactoryConfigured(ArtifactoryConfig) &&
-    !verifyReleaseChecksum(archivePath, asset)
-  ) {
-    cleanupArchive(archivePath);
-    throw new Error(`Checksum validation failed for ${asset.asset_name}`);
-  }
-
-  logInfo(`Extracting ${asset.asset_name} to ${destinationDir}`);
-  if (!extractReleaseAsset(archivePath, destinationDir)) {
-    cleanupArchive(archivePath);
-    throw new Error(`Failed to extract ${asset.asset_name} to ${destinationDir}`);
-  }
-
-  cleanupArchive(archivePath);
 }
 
 function buildAgentArtifactName(tag: string): string {

@@ -23,10 +23,13 @@ import {
 } from "../lib/process";
 import { appendJobSummary } from "../lib/summary";
 import {
-  downloadAndExtractReleaseAsset,
+  downloadLinuxAgentFromArtifactory,
+  downloadLinuxAgentFromRelease,
   fetchAgentRelease,
+  fetchAgentReleaseFromArtifactory,
   selectAgentReleaseAsset,
 } from "./agent-release";
+import { verifyReleaseChecksum } from "../lib/agent-release";
 
 type AgentBuildInfo = {
   raw: string;
@@ -63,17 +66,13 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     return;
   }
 
-  const release = await fetchAgentRelease(AgentRuntimeConfig.linuxAgentVersion);
+  const useArtifactory = isArtifactoryConfigured(ArtifactoryConfig);
+  const release = useArtifactory
+    ? await fetchAgentReleaseFromArtifactory()
+    : await fetchAgentRelease(AgentRuntimeConfig.linuxAgentVersion);
+
   if (!release) {
-    if (fs.existsSync(AgentFiles.linux.agentBinary)) {
-      logWarning(
-        `Unable to resolve the current Artifactory-served agent; continuing with existing agent binary at ${AgentFiles.linux.agentBinary}`,
-      );
-    } else {
-      logWarning(
-        `Unable to resolve the current Artifactory-served agent and no existing agent binary is available at ${AgentFiles.linux.agentBinary}`,
-      );
-    }
+    logUnavailableReleaseWarning(useArtifactory);
     return;
   }
 
@@ -86,7 +85,7 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
   }
 
   const expectedSha256 = assetChecksumSha256(asset.checksum);
-  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+  if (useArtifactory) {
     const currentSha256 = readCurrentSha256(AgentFiles.linux.currentSha256);
     if (
       expectedSha256 &&
@@ -103,14 +102,14 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
       `Detected agent build: ${buildInfo.name || "AgentBravo"} ${buildInfo.tag}`,
     );
     if (
-      !isArtifactoryConfigured(ArtifactoryConfig) &&
+      !useArtifactory &&
       normalizeVersionTag(buildInfo.tag) === normalizeVersionTag(release.tag)
     ) {
       return;
     }
   }
 
-  if (buildInfo && isArtifactoryConfigured(ArtifactoryConfig)) {
+  if (buildInfo && useArtifactory) {
     logInfo(`Refreshing AgentBravo ${release.tag} from Artifactory`);
   } else if (buildInfo) {
     logInfo(
@@ -120,11 +119,42 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     logInfo(`Installing AgentBravo ${release.tag}`);
   }
 
-  await downloadAndExtractReleaseAsset(
-    asset,
-    release.tag,
-    AgentRuntimeConfig.linuxRoot,
-  );
+  const archivePath = `/tmp/${asset.asset_name}`;
+  try {
+    if (useArtifactory) {
+      await downloadLinuxAgentFromArtifactory(
+        asset,
+        release.tag,
+        archivePath,
+      );
+    } else {
+      await downloadLinuxAgentFromRelease(asset, archivePath);
+    }
+
+    if (!verifyReleaseChecksum(archivePath, asset)) {
+      throw new Error(`Checksum validation failed for ${asset.asset_name}`);
+    }
+
+    logInfo(`Extracting ${asset.asset_name} to ${AgentRuntimeConfig.linuxRoot}`);
+    const extractResult = runCommand("sudo", [
+      "tar",
+      "-xzf",
+      archivePath,
+      "-C",
+      AgentRuntimeConfig.linuxRoot,
+    ]);
+    logCommandFailure(`Extracting ${archivePath}`, extractResult);
+    if (!extractResult || extractResult.status !== 0) {
+      throw new Error(
+        `Failed to extract ${asset.asset_name} to ${AgentRuntimeConfig.linuxRoot}`,
+      );
+    }
+  } finally {
+    const cleanupResult = runCommand("rm", ["-f", archivePath], {
+      silent: true,
+    });
+    logCommandFailure(`Removing ${archivePath}`, cleanupResult);
+  }
 
   const chmodResult = runCommand("sudo", [
     "chmod",
@@ -143,6 +173,23 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
 
 function normalizeVersionTag(tag: string): string {
   return tag.startsWith("v") ? tag.slice(1) : tag;
+}
+
+function logUnavailableReleaseWarning(useArtifactory: boolean): void {
+  const resolvedFrom = useArtifactory
+    ? "Artifactory-served agent"
+    : "release API";
+
+  if (fs.existsSync(AgentFiles.linux.agentBinary)) {
+    logWarning(
+      `Unable to resolve the current ${resolvedFrom}; continuing with existing agent binary at ${AgentFiles.linux.agentBinary}`,
+    );
+    return;
+  }
+
+  logWarning(
+    `Unable to resolve the current ${resolvedFrom} and no existing agent binary is available at ${AgentFiles.linux.agentBinary}`,
+  );
 }
 
 function detectAgentBuildInfo(): AgentBuildInfo | null {
