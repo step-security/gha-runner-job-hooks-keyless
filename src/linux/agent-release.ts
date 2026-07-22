@@ -5,7 +5,12 @@ import {
   logWarning,
   runCommand,
 } from "../lib/common";
-import { Urls } from "../lib/config";
+import {
+  downloadArtifact,
+  isArtifactoryConfigured,
+  resolveServingArtifactByProperties,
+} from "../lib/artifactory";
+import { ArtifactoryConfig, Urls } from "../lib/config";
 import {
   AgentRelease,
   AgentReleaseAsset,
@@ -20,6 +25,13 @@ const AgentReleaseBaseUrl = `${Urls.stepSecurityApi}/harden-runner-agent/github/
 export async function fetchAgentRelease(
   versionSelector: string,
 ): Promise<AgentRelease | null> {
+
+
+  
+  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+    return fetchAgentReleaseFromArtifactory();
+  }
+
   const releaseUrl =
     versionSelector === "latest"
       ? `${AgentReleaseBaseUrl}/latest`
@@ -50,6 +62,41 @@ export async function fetchAgentRelease(
     logWarning(
       `Failed to fetch agent release for ${versionSelector}: ${message}`,
     );
+    return null;
+  }
+}
+
+async function fetchAgentReleaseFromArtifactory(): Promise<AgentRelease | null> {
+  const arch = getAgentArch();
+  if (!arch) {
+    logWarning(`Unsupported agent architecture: ${process.arch}`);
+    return null;
+  }
+
+  try {
+    const serving = await resolveServingArtifactByProperties(
+      ArtifactoryConfig,
+      {
+        "ss.serving": "true",
+        "ss.approved": "true",
+        "ss.os": "linux",
+        "ss.arch": arch,
+      },
+    );
+
+    return {
+      tag: serving.version,
+      assets: [
+        {
+          asset_name: serving.name,
+          checksum: `sha256:${serving.sha256}`,
+          primary_download_url: serving.url,
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(`Failed to resolve Artifactory agent release: ${message}`);
     return null;
   }
 }
@@ -89,26 +136,46 @@ function cleanupArchive(archivePath: string): void {
 
 export async function downloadAndExtractReleaseAsset(
   asset: AgentReleaseAsset,
+  releaseVersion: string,
   destinationDir: string,
-): Promise<boolean> {
+): Promise<void> {
   const archivePath = `/tmp/${asset.asset_name}`;
-  if (!(await downloadReleaseAsset(asset, archivePath))) {
-    return false;
+  if (isArtifactoryConfigured(ArtifactoryConfig)) {
+    const checksum = asset.checksum || "";
+    const sha256 = checksum.startsWith("sha256:")
+      ? checksum.slice("sha256:".length)
+      : "";
+    const downloaded = await downloadArtifact(
+      {
+        version: releaseVersion,
+        name: asset.asset_name,
+        sha256,
+        url: asset.primary_download_url,
+      },
+      archivePath,
+    );
+    if (!downloaded) {
+      throw new Error(`Failed to download ${asset.asset_name} from Artifactory`);
+    }
+  } else if (!(await downloadReleaseAsset(asset, archivePath))) {
+    throw new Error(`Failed to download ${asset.asset_name}`);
   }
 
-  if (!verifyReleaseChecksum(archivePath, asset)) {
+  if (
+    !isArtifactoryConfigured(ArtifactoryConfig) &&
+    !verifyReleaseChecksum(archivePath, asset)
+  ) {
     cleanupArchive(archivePath);
-    return false;
+    throw new Error(`Checksum validation failed for ${asset.asset_name}`);
   }
 
   logInfo(`Extracting ${asset.asset_name} to ${destinationDir}`);
   if (!extractReleaseAsset(archivePath, destinationDir)) {
     cleanupArchive(archivePath);
-    return false;
+    throw new Error(`Failed to extract ${asset.asset_name} to ${destinationDir}`);
   }
 
   cleanupArchive(archivePath);
-  return true;
 }
 
 function buildAgentArtifactName(tag: string): string {
