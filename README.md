@@ -19,9 +19,15 @@ Platform-specific requirements:
 - Linux: `bash`, `curl`, and `sudo` if writing hook variables to `/etc/environment`.
 - Windows: PowerShell and permission to set machine-level environment variables for the runner service.
 
+Additional requirements for the Artifactory-hosted wrapper flow in `scripts/wrapper.sh`:
+
+- Linux: `jq` and `sha256sum`
+
 ## Usage
 
-The recommended hosting model is for a central platform or security team to publish approved hook assets to stable internal URLs, and for the DevOps team to configure each runner to use those URLs.
+This README describes internal hosting options for StepSecurity job hooks, including an Artifactory-based wrapper flow for centrally managed hook assets.
+
+The simplest model is for a central platform or security team to publish approved hook assets to stable internal URLs, and for the DevOps team to configure each runner to use those URLs.
 
 ### Central team hosts hook assets internally
 
@@ -116,22 +122,22 @@ On Windows, these variables should point to the wrapper scripts the runner can e
 
 The following environment variables can be used to configure the hook behavior:
 
-| Variable                     | Default                                   | Description                                                                                                                                                                                                        |
-| ---------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `STEP_AGENT_ROOT`            | `/home/agent`                             | Linux directory used for agent files, status files, logs, and hook state. This is separate from the wrapper script path configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.   |
-| `STEP_AGENT_ROOT_WINDOWS`    | `C:\agent`                                | Windows directory used for agent files, status files, logs, and hook state. This is separate from the wrapper script path configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`. |
-| `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                    |
-| `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                            |
-| `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                          |
+| Variable                     | Default                                   | Description                                                                                                                                                                                                                                                  |
+| ---------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `STEP_AGENT_ROOT`            | `/home/agent`                             | Linux directory used for agent files, status files, logs, and hook state. This is separate from the wrapper script path configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.                                             |
+| `STEP_AGENT_ROOT_WINDOWS`    | `C:\agent`                                | Windows directory used for agent files, status files, logs, and hook state. This is separate from the wrapper script path configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.                                           |
+| `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                                                              |
+| `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                      |
+| `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
 | `STEP_ARTIFACTORY_BASE`      | ``                                        | Optional Artifactory base URL for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
-| `STEP_ARTIFACTORY_REPO`      | ``                                        | Optional Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required when using property-based serving resolution.                                                        |
-| `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                   |
-| `STEP_API_KEY_ROLE_ARN`      | ``                                        | IAM role to assume before reading the API key from AWS Secrets Manager.                                                                                                                                            |
-| `STEP_API_KEY_SECRET_NAME`   | `stepsecurity/orgs/<owner>/vm-api-key`    | Secrets Manager secret name. Supports `<owner>` placeholder substitution with the GitHub owner before reading the secret.                                                                                          |
-| `STEP_API_KEY_SECRET_REGION` | `us-west-2`                               | AWS region for the Secrets Manager secret.                                                                                                                                                                         |
-| `STEP_API_KEY_SECRET_FIELD`  | `api_key`                                 | JSON field inside the Secrets Manager secret that contains the API key.                                                                                                                                            |
-| `STEP_API`                   | `https://agent.api.stepsecurity.io/v1`    | StepSecurity API endpoint.                                                                                                                                                                                         |
-| `STEP_TELEMETRY_URL`         | `https://prod.app-api.stepsecurity.io/v1` | StepSecurity telemetry endpoint.                                                                                                                                                                                   |
+| `STEP_ARTIFACTORY_REPO`      | ``                                        | Optional Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required when using property-based serving resolution.                                                                                                    |
+| `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                                                             |
+| `STEP_API_KEY_ROLE_ARN`      | ``                                        | IAM role to assume before reading the API key from AWS Secrets Manager.                                                                                                                                                                                      |
+| `STEP_API_KEY_SECRET_NAME`   | `stepsecurity/orgs/<owner>/vm-api-key`    | Secrets Manager secret name. Supports `<owner>` placeholder substitution with the GitHub owner before reading the secret.                                                                                                                                    |
+| `STEP_API_KEY_SECRET_REGION` | `us-west-2`                               | AWS region for the Secrets Manager secret.                                                                                                                                                                                                                   |
+| `STEP_API_KEY_SECRET_FIELD`  | `api_key`                                 | JSON field inside the Secrets Manager secret that contains the API key.                                                                                                                                                                                      |
+| `STEP_API`                   | `https://agent.api.stepsecurity.io/v1`    | StepSecurity API endpoint.                                                                                                                                                                                                                                   |
+| `STEP_TELEMETRY_URL`         | `https://prod.app-api.stepsecurity.io/v1` | StepSecurity telemetry endpoint.                                                                                                                                                                                                                             |
 
 Set these values in the wrapper scripts or inject them through your runner configuration before running the hook. On Linux wrapper scripts, use `export STEP_NAME=value`. On Windows wrapper scripts, set them with PowerShell environment assignments such as `$env:STEP_AGENT_ROOT_WINDOWS='C:\agent'`.
 
@@ -207,11 +213,82 @@ Property-based serving resolution:
 - Query example:
   - `https://stepsecurity.jfrog.io/artifactory/api/search/prop?ss.serving=true&ss.approved=true&ss.os=windows&ss.arch=amd64&repos=jatin-repo1`
 
+#### Hosting `pre.js` and `post.js` in Artifactory
+
+You can also host the GitHub Actions wrapper hook assets themselves in Artifactory. This is the model used by `scripts/wrapper.sh`, where the local `pre.sh` and `post.sh` wrappers stage `pre.js` and `post.js` under `STEP_AGENT_ROOT/gha-hooks` and execute the staged copy.
+
+#### Setting up the wrapper script
+
+`scripts/wrapper.sh` is the reference wrapper script for the Artifactory-hosted hook flow.
+
+Copy `scripts/wrapper.sh` from this repository, or from your internal mirror of it, to the runner once and expose it under both `pre.sh` and `post.sh`. Using symlinks is preferable to copying because both hook entrypoints stay pinned to the same wrapper implementation.
+
+Example:
+
+```sh
+sudo mkdir -p /opt/step-security
+sudo install -m 0755 ./scripts/wrapper.sh /opt/step-security/wrapper.sh
+sudo ln -sf /opt/step-security/wrapper.sh /opt/step-security/pre.sh
+sudo ln -sf /opt/step-security/wrapper.sh /opt/step-security/post.sh
+```
+
+Then configure the GitHub Actions runner hook environment variables to point to those symlinks:
+
+```sh
+echo "ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/step-security/pre.sh" | sudo tee -a /etc/environment
+echo "ACTIONS_RUNNER_HOOK_JOB_COMPLETED=/opt/step-security/post.sh" | sudo tee -a /etc/environment
+```
+
+#### Wrapper script behavior
+
+The Artifactory wrapper flow uses the same script in two modes:
+
+- `pre.sh` and `post.sh` are the same wrapper script under different filenames.
+- When invoked as `pre.sh`, the wrapper queries Artifactory, refreshes the staged `pre.js` and `post.js` files, and then executes staged `pre.js`.
+- When invoked as `post.sh`, the wrapper skips the Artifactory refresh and executes the already staged `post.js`.
+- Staged hook files are stored under `STEP_AGENT_ROOT/gha-hooks`.
+- If Artifactory is unavailable, returns no matching hook assets, or returns an asset with a checksum mismatch, the wrapper keeps the currently staged copy and continues.
+- The refresh flow requires `curl`, `jq`, `sha256sum`, and `node` to be available on the runner.
+
+How the wrapper resolves hook assets:
+
+- The pre-job wrapper queries Artifactory with:
+  - `GET ${STEP_ARTIFACTORY_BASE}/api/search/prop?ss.serving=true&ss.gha-hook=true&repos=${STEP_ARTIFACTORY_REPO}`
+- The response can contain multiple matches. The wrapper selects the most recently created asset for each of:
+  - `pre.js`
+  - `post.js`
+- For each selected asset, the wrapper:
+  - downloads `downloadUri`
+  - verifies `checksums.sha256`
+  - stages the file at `STEP_AGENT_ROOT/gha-hooks/pre.js` or `STEP_AGENT_ROOT/gha-hooks/post.js`
+  - replaces the staged copy only when the downloaded SHA differs
+- The refresh runs during the pre-job flow. The post-job flow executes the already staged `post.js`.
+
+Required properties for hook assets:
+
+- `ss.serving=true`
+- `ss.gha-hook=true`
+
+Example repository layout:
+
+- `jatin-repo1/stepsecurity/gha-hooks-bootstrap/0.0.3/pre.js`
+- `jatin-repo1/stepsecurity/gha-hooks-bootstrap/0.0.3/post.js`
+
+Example query:
+
+- `https://stepsecurity.jfrog.io/artifactory/api/search/prop?ss.serving=true&ss.gha-hook=true&repos=jatin-repo1`
+
+Operational notes:
+
+- The repository must allow anonymous read access to both the property search API and the asset `downloadUri` values.
+- If Artifactory returns no matching hook assets, the wrapper keeps the currently staged copies.
+- If checksum validation fails for either hook asset, the wrapper keeps the currently staged copy and continues without replacing it.
+
 ## Notes and troubleshooting
 
 - `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED` must point to wrapper scripts, not directly to `pre.js` or `post.js`.
 - Hook failures can block the workflow job.
 - When using centrally hosted hook assets, prefer stable internal URLs and let the central team manage the rollout behind those URLs.
-- The wrapper scripts download and execute the hook release asset each time the hook runs.
+- In the Artifactory-hosted wrapper flow, the pre-job wrapper refreshes staged `pre.js` and `post.js`, then executes the staged copy. The post-job wrapper executes the staged `post.js`.
 - Check wrapper scripts at the paths configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.
 - Check agent files, logs, and hook state under `STEP_AGENT_ROOT` on Linux or `STEP_AGENT_ROOT_WINDOWS` on Windows.
