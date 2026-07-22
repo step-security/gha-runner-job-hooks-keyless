@@ -125,7 +125,6 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                          |
 | `STEP_ARTIFACTORY_BASE`      | ``                                        | Optional Artifactory base URL for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
 | `STEP_ARTIFACTORY_REPO`      | ``                                        | Optional Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required when using property-based serving resolution.                                                        |
-| `STEP_AGENT_ARTIFACTORY_URL` | ``                                        | Optional direct-download Artifactory base URL for agent assets. When set without `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO`, the hook downloads from `<STEP_AGENT_ARTIFACTORY_URL>/<asset_name>` instead of the API-provided URLs.            |
 | `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                   |
 | `STEP_API_KEY_ROLE_ARN`      | ``                                        | IAM role to assume before reading the API key from AWS Secrets Manager.                                                                                                                                            |
 | `STEP_API_KEY_SECRET_NAME`   | `stepsecurity/orgs/<owner>/vm-api-key`    | Secrets Manager secret name. Supports `<owner>` placeholder substitution with the GitHub owner before reading the secret.                                                                                          |
@@ -136,7 +135,7 @@ The following environment variables can be used to configure the hook behavior:
 
 Set these values in the wrapper scripts or inject them through your runner configuration before running the hook. On Linux wrapper scripts, use `export STEP_NAME=value`. On Windows wrapper scripts, set them with PowerShell environment assignments such as `$env:STEP_AGENT_ROOT_WINDOWS='C:\agent'`.
 
-Each hook validates configured network endpoints at startup and logs warnings for failures. Checked endpoints include `STEP_API`, `STEP_TELEMETRY_URL`, `STEP_AGENT_ARTIFACTORY_URL` when set, `STEP_ARTIFACTORY_BASE` or `ARTIFACTORY_BASE` when set, and AWS STS and Secrets Manager regional endpoints when `STEP_API_KEY_ROLE_ARN` is set. API-discovered agent asset URLs are not preflighted. The pre-job hook also requires either `STEP_API_KEY` or `STEP_API_KEY_ROLE_ARN`; if neither is set, the hook logs the configuration problem and exits successfully after printing detailed diagnostics.
+Each hook validates configured network endpoints at startup and logs warnings for failures. Checked endpoints include `STEP_API`, `STEP_TELEMETRY_URL`, `STEP_ARTIFACTORY_BASE` or `ARTIFACTORY_BASE` when set, and AWS STS and Secrets Manager regional endpoints when `STEP_API_KEY_ROLE_ARN` is set. API-discovered agent asset URLs are not preflighted. VM pre-job hooks require either `STEP_API_KEY` or `STEP_API_KEY_ROLE_ARN`; if neither is set, the hook logs the configuration problem and exits successfully after printing detailed diagnostics. Kubernetes pre-job hooks do not require API-key-related env vars during preflight.
 
 ### Resolving the StepSecurity API key
 
@@ -168,10 +167,7 @@ For more on managing the API key, see:
 
 ### Artifactory
 
-Two Artifactory modes are supported:
-
-- Property-based serving resolution: set `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO`. The hook queries Artifactory for the single artifact marked as serving for the current platform and architecture, downloads `downloadUri`, verifies `checksums.sha256`, and refreshes only when the serving SHA changes.
-- Direct-download mode: set `STEP_AGENT_ARTIFACTORY_URL`. The hook downloads from `<STEP_AGENT_ARTIFACTORY_URL>/<asset_name>` and does not query Artifactory properties.
+Artifactory serving uses property-based resolution. Set `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO`. The repository must allow anonymous read access. The hook queries Artifactory for the single artifact marked as serving for the current platform and architecture, downloads `downloadUri`, verifies `checksums.sha256`, and refreshes only when the serving SHA changes.
 
 #### How it works
 
@@ -181,7 +177,6 @@ Two Artifactory modes are supported:
   - Windows: `ss.os=windows`, `ss.arch=amd64`
 - The property search must return exactly one result. The hook uses `downloadUri` to download the tarball and `checksums.sha256` to validate it.
 - The hook stores the currently staged tarball SHA under `.current_sha256` in `STEP_AGENT_ROOT` or `STEP_AGENT_ROOT_WINDOWS`, and re-installs only when the serving SHA changes or the agent binary is missing.
-- When only `STEP_AGENT_ARTIFACTORY_URL` is set, the hook downloads assets only from `<STEP_AGENT_ARTIFACTORY_URL>/<asset_name>`.
 - When neither Artifactory mode is configured, the hook uses the StepSecurity release API as before.
 
 #### How to populate Artifactory
@@ -203,18 +198,6 @@ Example repository paths:
 - Linux arm64: `stepsecurity/harden-runner-bravo/1.8.12/harden-runner-bravo_1.8.12_linux_arm64.tar.gz`
 - Windows amd64: `stepsecurity/harden-runner-agent-windows/1.0.7/harden-runner-agent-windows_1.0.7_windows_amd64.tar.gz`
 
-For direct-download mode:
-
-1. Call the StepSecurity release API for the required platform and version:
-   - Linux latest: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/linux/single/releases/latest`
-   - Linux specific version: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/linux/single/releases/<tag>`
-   - Windows latest: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/win/single/releases/latest`
-   - Windows specific version: `https://agent.api.stepsecurity.io/v1/harden-runner-agent/github/win/single/releases/<tag>`
-2. Inspect the returned `assets` list and identify the files you need.
-3. Open either `primary_download_url` or `fallback_download_url` for each asset and download the archive.
-4. Upload each downloaded archive into your internal Artifactory using the exact filename from `asset_name`.
-5. Set `STEP_AGENT_ARTIFACTORY_URL` on the runner to the Artifactory base URL that serves those uploaded files.
-
 #### Example
 
 Property-based serving resolution:
@@ -223,12 +206,6 @@ Property-based serving resolution:
 - `STEP_ARTIFACTORY_REPO=jatin-repo1`
 - Query example:
   - `https://stepsecurity.jfrog.io/artifactory/api/search/prop?ss.serving=true&ss.approved=true&ss.os=windows&ss.arch=amd64&repos=jatin-repo1`
-
-Direct-download mode:
-
-- Linux fallback URL: `https://packages.stepsecurity.io/self-hosted/harden-runner-bravo_1.8.12_linux_arm64.tar.gz`
-- Windows fallback URL: `https://packages.stepsecurity.io/self-hosted/harden-runner-agent-windows_1.0.7_windows_amd64.tar.gz`
-- `STEP_AGENT_ARTIFACTORY_URL=https://artifactory.example.com/self-hosted`
 
 ## Notes and troubleshooting
 

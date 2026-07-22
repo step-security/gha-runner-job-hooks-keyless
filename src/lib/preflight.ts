@@ -21,7 +21,7 @@ export class HookConfigurationError extends Error {
 }
 
 type ConfiguredEndpointPreflightOptions = {
-  requireAuth?: boolean;
+  requireVmApiKey?: boolean;
 };
 
 export async function runConfiguredEndpointPreflight(
@@ -52,7 +52,7 @@ export async function runConfiguredEndpointPreflight(
     logWarning(failure);
   }
 
-  if (options.requireAuth && configFailures.length > 0) {
+  if (options.requireVmApiKey && configFailures.length > 0) {
     throw new HookConfigurationError(configFailures.join("; "));
   }
 }
@@ -63,7 +63,7 @@ function collectConfigFailures(
   const failures: string[] = [];
 
   if (
-    options.requireAuth &&
+    options.requireVmApiKey &&
     !ApiKeyConfig.envApiKey.trim() &&
     !ApiKeyConfig.roleArn.trim()
   ) {
@@ -91,13 +91,6 @@ function collectConfiguredEndpoints(): Array<{ label: string; url: string }> {
     { label: "StepSecurity API", url: Urls.stepSecurityApi },
     { label: "StepSecurity telemetry API", url: Urls.stepSecurityTelemetry },
   ];
-
-  if (Urls.agentArtifactoryUrl.trim()) {
-    endpoints.push({
-      label: "agent Artifactory download URL",
-      url: Urls.agentArtifactoryUrl,
-    });
-  }
 
   if (ArtifactoryConfig.base.trim()) {
     endpoints.push({

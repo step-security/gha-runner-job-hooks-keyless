@@ -80,12 +80,16 @@ async function fetchWindowsAgentRelease(): Promise<AgentRelease> {
   });
 
   if (String(statusCode) !== "200") {
-    throw new Error(`Failed to fetch Windows agent release: status ${statusCode}`);
+    throw new Error(
+      `Failed to fetch Windows agent release: status ${statusCode}`,
+    );
   }
 
   const release = JSON.parse(body) as AgentRelease;
   if (!release.tag || !Array.isArray(release.assets)) {
-    throw new Error("Windows agent release response is missing expected fields");
+    throw new Error(
+      "Windows agent release response is missing expected fields",
+    );
   }
 
   return release;
@@ -115,8 +119,8 @@ function selectWindowsAgentAsset(
   release: AgentRelease,
 ): AgentReleaseAsset | null {
   return (
-    release.assets.find(
-      (asset) => asset.asset_name.includes("windows_amd64.tar.gz"),
+    release.assets.find((asset) =>
+      asset.asset_name.includes("windows_amd64.tar.gz"),
     ) || null
   );
 }
@@ -137,13 +141,17 @@ async function downloadWindowsAgent(
       archivePath,
     );
     if (!downloaded) {
-      throw new Error(`Failed to download Windows agent asset ${asset.asset_name}`);
+      throw new Error(
+        `Failed to download Windows agent asset ${asset.asset_name}`,
+      );
     }
     return;
   }
 
   if (!(await downloadReleaseAsset(asset, archivePath))) {
-    throw new Error(`Failed to download Windows agent asset ${asset.asset_name}`);
+    throw new Error(
+      `Failed to download Windows agent asset ${asset.asset_name}`,
+    );
   }
 }
 
@@ -174,7 +182,9 @@ export async function installWindowsAgent(): Promise<void> {
   const release = await fetchWindowsAgentRelease();
   const asset = selectWindowsAgentAsset(release);
   if (!asset) {
-    throw new Error(`No matching Windows agent release asset found for ${release.tag}`);
+    throw new Error(
+      `No matching Windows agent release asset found for ${release.tag}`,
+    );
   }
 
   const expectedSha256 = assetChecksumSha256(asset.checksum);
@@ -221,7 +231,9 @@ export async function startWindowsAgentProcess(): Promise<void> {
   if (existingPid && processExists(existingPid)) {
     const message = trySignalProcess(existingPid, "SIGKILL");
     if (message) {
-      logWarning(`Failed to send SIGKILL to Windows agent process ${existingPid}: ${message}`);
+      logWarning(
+        `Failed to send SIGKILL to Windows agent process ${existingPid}: ${message}`,
+      );
       if (processExists(existingPid)) {
         return;
       }
@@ -239,6 +251,12 @@ export async function startWindowsAgentProcess(): Promise<void> {
     removeIfExists(filePath);
   }
 
+  if (!fs.existsSync(AgentFiles.windows.agentBinary)) {
+    throw new Error(
+      `Agent binary is missing: ${AgentFiles.windows.agentBinary}`,
+    );
+  }
+
   const logStream = fs.openSync(AgentFiles.windows.agentLog, "a");
   const childProcess =
     require("child_process") as typeof import("child_process");
@@ -251,7 +269,11 @@ export async function startWindowsAgentProcess(): Promise<void> {
   });
   agentProcess.unref();
 
-  fs.writeFileSync(AgentFiles.windows.agentPid, `${agentProcess.pid}\n`, "utf8");
+  fs.writeFileSync(
+    AgentFiles.windows.agentPid,
+    `${agentProcess.pid}\n`,
+    "utf8",
+  );
   logInfo(`Windows agent process started with PID: ${agentProcess.pid}`);
 
   const { matched } = await waitForCondition(
@@ -292,7 +314,9 @@ export async function stopWindowsAgentProcess(): Promise<void> {
   {
     const message = trySignalProcess(pid, "SIGINT");
     if (message) {
-      logWarning(`Failed to send SIGINT to Windows agent process ${pid}: ${message}`);
+      logWarning(
+        `Failed to send SIGINT to Windows agent process ${pid}: ${message}`,
+      );
       if (!processExists(pid)) {
         removePidFile(AgentFiles.windows.agentPid);
       }
@@ -300,7 +324,11 @@ export async function stopWindowsAgentProcess(): Promise<void> {
     }
   }
 
-  const { matched } = await waitForCondition(() => !processExists(pid), 10, 1000);
+  const { matched } = await waitForCondition(
+    () => !processExists(pid),
+    10,
+    1000,
+  );
   if (matched) {
     logInfo(`Windows agent process stopped gracefully: ${pid}`);
     removePidFile(AgentFiles.windows.agentPid);
@@ -312,11 +340,17 @@ export async function stopWindowsAgentProcess(): Promise<void> {
   if (processExists(pid)) {
     const message = trySignalProcess(pid, "SIGKILL");
     if (message) {
-      logWarning(`Failed to send SIGKILL to Windows agent process ${pid}: ${message}`);
+      logWarning(
+        `Failed to send SIGKILL to Windows agent process ${pid}: ${message}`,
+      );
     }
   }
 
-  const { matched: killed } = await waitForCondition(() => !processExists(pid), 3, 1000);
+  const { matched: killed } = await waitForCondition(
+    () => !processExists(pid),
+    3,
+    1000,
+  );
   if (killed || !processExists(pid)) {
     removePidFile(AgentFiles.windows.agentPid);
   }

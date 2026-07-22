@@ -52,7 +52,6 @@ export const Urls = {
     process.env.STEP_API || "https://agent.api.stepsecurity.io/v1",
   stepSecurityTelemetry:
     process.env.STEP_TELEMETRY_URL || "https://prod.app-api.stepsecurity.io/v1",
-  agentArtifactoryUrl: process.env.STEP_AGENT_ARTIFACTORY_URL || "", // TODO: remove functionality related to this
 } as const;
 
 export const ArtifactoryConfig = {
