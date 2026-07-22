@@ -3,9 +3,11 @@
 import { handleFatalError, logWarning } from "./lib/common";
 import { runLinuxPreJobHook } from "./linux/pre";
 import { runWindowsPreJobHook } from "./windows/pre";
+import { HookVersion } from "./version";
 
 async function main(): Promise<void> {
   console.log("[StepSecurity] pre job-hook");
+  console.log(`[StepSecurity] job-hook version=${HookVersion}`);
 
   if (process.platform === "linux") {
     await runLinuxPreJobHook();
