@@ -18,6 +18,20 @@ export function readPidFile(pidFilePath: string): number | null {
   return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
+export function isAgentRunning(pidFilePath: string): boolean {
+  const pid = readPidFile(pidFilePath);
+  if (!pid) {
+    return false;
+  }
+
+  if (!processExists(pid)) {
+    removePidFile(pidFilePath);
+    return false;
+  }
+
+  return true;
+}
+
 export function removePidFile(pidFilePath: string): void {
   if (fs.existsSync(pidFilePath)) {
     fs.unlinkSync(pidFilePath);

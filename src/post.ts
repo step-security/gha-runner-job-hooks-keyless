@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { handleFatalError, logWarning } from "./lib/common";
+import { runConfiguredEndpointPreflight } from "./lib/preflight";
 import { runLinuxPostJobHook } from "./linux/post";
 import { runWindowsPostJobHook } from "./windows/post";
 
 async function main(): Promise<void> {
   console.log("[StepSecurity] post job-hook");
+  await runConfiguredEndpointPreflight();
 
   if (process.platform === "linux") {
     await runLinuxPostJobHook();

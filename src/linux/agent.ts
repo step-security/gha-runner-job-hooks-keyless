@@ -1,13 +1,19 @@
 import * as fs from "fs";
 
 import {
+  assetChecksumSha256,
+  isArtifactoryConfigured,
+  readCurrentSha256,
+  writeCurrentSha256,
+} from "../lib/artifactory";
+import {
   logCommandFailure,
   logInfo,
   logWarning,
   runCommand,
   waitForCondition,
 } from "../lib/common";
-import { AgentFiles, AgentRuntimeConfig, Urls } from "../lib/config";
+import { AgentFiles, AgentRuntimeConfig, ArtifactoryConfig, Urls } from "../lib/config";
 import { readCorrelationIdFromAgentJson } from "../lib/files";
 import {
   processExists,
@@ -17,10 +23,13 @@ import {
 } from "../lib/process";
 import { appendJobSummary } from "../lib/summary";
 import {
-  downloadAndExtractReleaseAsset,
+  downloadLinuxAgentFromArtifactory,
+  downloadLinuxAgentFromRelease,
   fetchAgentRelease,
+  fetchAgentReleaseFromArtifactory,
   selectAgentReleaseAsset,
 } from "./agent-release";
+import { verifyReleaseChecksum } from "../lib/agent-release";
 
 type AgentBuildInfo = {
   raw: string;
@@ -57,18 +66,14 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     return;
   }
 
-  const release = await fetchAgentRelease(AgentRuntimeConfig.linuxAgentVersion);
-  if (!release) {
-    return;
-  }
+  const useArtifactory = isArtifactoryConfigured(ArtifactoryConfig);
+  const release = useArtifactory
+    ? await fetchAgentReleaseFromArtifactory()
+    : await fetchAgentRelease(AgentRuntimeConfig.linuxAgentVersion);
 
-  if (buildInfo) {
-    logInfo(
-      `Detected agent build: ${buildInfo.name || "AgentBravo"} ${buildInfo.tag}`,
-    );
-    if (buildInfo.tag === release.tag) {
-      return;
-    }
+  if (!release) {
+    logUnavailableReleaseWarning(useArtifactory);
+    return;
   }
 
   const asset = selectAgentReleaseAsset(release);
@@ -79,7 +84,34 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     return;
   }
 
+  const expectedSha256 = assetChecksumSha256(asset.checksum);
+  if (useArtifactory) {
+    const currentSha256 = readCurrentSha256(AgentFiles.linux.currentSha256);
+    if (
+      expectedSha256 &&
+      currentSha256 === expectedSha256 &&
+      fs.existsSync(AgentFiles.linux.agentBinary)
+    ) {
+      logInfo(`AgentBravo already at serving sha ${expectedSha256}`);
+      return;
+    }
+  }
+
   if (buildInfo) {
+    logInfo(
+      `Detected agent build: ${buildInfo.name || "AgentBravo"} ${buildInfo.tag}`,
+    );
+    if (
+      !useArtifactory &&
+      normalizeVersionTag(buildInfo.tag) === normalizeVersionTag(release.tag)
+    ) {
+      return;
+    }
+  }
+
+  if (buildInfo && useArtifactory) {
+    logInfo(`Refreshing AgentBravo ${release.tag} from Artifactory`);
+  } else if (buildInfo) {
     logInfo(
       `Updating AgentBravo from ${buildInfo.tag || "unknown"} to ${release.tag}`,
     );
@@ -87,12 +119,41 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
     logInfo(`Installing AgentBravo ${release.tag}`);
   }
 
-  const installed = await downloadAndExtractReleaseAsset(
-    asset,
-    AgentRuntimeConfig.linuxRoot,
-  );
-  if (!installed) {
-    throw new Error("Failed to install AgentBravo");
+  const archivePath = `/tmp/${asset.asset_name}`;
+  try {
+    if (useArtifactory) {
+      await downloadLinuxAgentFromArtifactory(
+        asset,
+        release.tag,
+        archivePath,
+      );
+    } else {
+      await downloadLinuxAgentFromRelease(asset, archivePath);
+    }
+
+    if (!verifyReleaseChecksum(archivePath, asset)) {
+      throw new Error(`Checksum validation failed for ${asset.asset_name}`);
+    }
+
+    logInfo(`Extracting ${asset.asset_name} to ${AgentRuntimeConfig.linuxRoot}`);
+    const extractResult = runCommand("sudo", [
+      "tar",
+      "-xzf",
+      archivePath,
+      "-C",
+      AgentRuntimeConfig.linuxRoot,
+    ]);
+    logCommandFailure(`Extracting ${archivePath}`, extractResult);
+    if (!extractResult || extractResult.status !== 0) {
+      throw new Error(
+        `Failed to extract ${asset.asset_name} to ${AgentRuntimeConfig.linuxRoot}`,
+      );
+    }
+  } finally {
+    const cleanupResult = runCommand("rm", ["-f", archivePath], {
+      silent: true,
+    });
+    logCommandFailure(`Removing ${archivePath}`, cleanupResult);
   }
 
   const chmodResult = runCommand("sudo", [
@@ -103,6 +164,31 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
   logCommandFailure(
     `Making ${AgentFiles.linux.agentBinary} executable`,
     chmodResult,
+  );
+
+  if (expectedSha256) {
+    writeCurrentSha256(AgentFiles.linux.currentSha256, expectedSha256);
+  }
+}
+
+function normalizeVersionTag(tag: string): string {
+  return tag.startsWith("v") ? tag.slice(1) : tag;
+}
+
+function logUnavailableReleaseWarning(useArtifactory: boolean): void {
+  const resolvedFrom = useArtifactory
+    ? "Artifactory-served agent"
+    : "release API";
+
+  if (fs.existsSync(AgentFiles.linux.agentBinary)) {
+    logWarning(
+      `Unable to resolve the current ${resolvedFrom}; continuing with existing agent binary at ${AgentFiles.linux.agentBinary}`,
+    );
+    return;
+  }
+
+  logWarning(
+    `Unable to resolve the current ${resolvedFrom} and no existing agent binary is available at ${AgentFiles.linux.agentBinary}`,
   );
 }
 
@@ -175,6 +261,10 @@ export function killExistingAgentProcess(): void {
 
 export async function startAgentProcess(): Promise<void> {
   killExistingAgentProcess();
+
+  if (!fs.existsSync(AgentFiles.linux.agentBinary)) {
+    throw new Error(`Agent binary is missing: ${AgentFiles.linux.agentBinary}`);
+  }
 
   for (const filePath of [
     AgentFiles.linux.agentStatus,

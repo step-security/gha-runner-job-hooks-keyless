@@ -40,4 +40,5 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
             dist/pre.js#pre.js \
-            dist/post.js#post.js
+            dist/post.js#post.js \
+            dist/checksums.txt#checksums.txt
