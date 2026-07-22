@@ -88,7 +88,6 @@ async function fetchWindowsAgentReleaseFromArtifactory(): Promise<AgentRelease |
       ArtifactoryConfig,
       {
         "ss.serving": "true",
-        "ss.approved": "true",
         "ss.os": "windows",
         "ss.arch": "amd64",
       },
