@@ -30,7 +30,9 @@ jobs:
         run: npm ci
 
       - name: Build release artifacts
-        run: npm run build
+        run: |
+          printf 'export const HookVersion = "%s";\n' "${GITHUB_REF_NAME}" > src/version.ts
+          npm run build
 
       - name: Create release
         env:
