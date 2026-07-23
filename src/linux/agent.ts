@@ -92,14 +92,16 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
       currentSha256 === expectedSha256 &&
       fs.existsSync(AgentFiles.linux.agentBinary)
     ) {
-      logInfo(`AgentBravo already at serving sha ${expectedSha256}`);
+      logInfo(
+        `AgentBravo status=already-serving version=${buildInfo?.tag || release.tag || "unknown"} sha256=${expectedSha256}`,
+      );
       return;
     }
   }
 
   if (buildInfo) {
     logInfo(
-      `Detected agent build: ${buildInfo.name || "AgentBravo"} ${buildInfo.tag}`,
+      `AgentBravo status=detected version=${buildInfo.tag || "unknown"} name=${buildInfo.name || "AgentBravo"} commit=${buildInfo.commit || "unknown"} branch=${buildInfo.branch || "unknown"}`,
     );
     if (
       !useArtifactory &&
@@ -110,13 +112,15 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
   }
 
   if (buildInfo && useArtifactory) {
-    logInfo(`Refreshing AgentBravo ${release.tag} from Artifactory`);
+    logInfo(
+      `AgentBravo action=refresh source=artifactory current_version=${buildInfo.tag || "unknown"} target_version=${release.tag}`,
+    );
   } else if (buildInfo) {
     logInfo(
-      `Updating AgentBravo from ${buildInfo.tag || "unknown"} to ${release.tag}`,
+      `AgentBravo action=update source=release-api current_version=${buildInfo.tag || "unknown"} target_version=${release.tag}`,
     );
   } else {
-    logInfo(`Installing AgentBravo ${release.tag}`);
+    logInfo(`AgentBravo action=install target_version=${release.tag}`);
   }
 
   const archivePath = `/tmp/${asset.asset_name}`;
@@ -135,7 +139,9 @@ export async function ensureLatestBravoLinuxAgent(): Promise<void> {
       throw new Error(`Checksum validation failed for ${asset.asset_name}`);
     }
 
-    logInfo(`Extracting ${asset.asset_name} to ${AgentRuntimeConfig.linuxRoot}`);
+    logInfo(
+      `AgentBravo action=extract asset=${asset.asset_name} destination=${AgentRuntimeConfig.linuxRoot}`,
+    );
     const extractResult = runCommand("sudo", [
       "tar",
       "-xzf",
@@ -248,10 +254,12 @@ export function killExistingAgentProcess(): void {
     return;
   }
 
-  logInfo(`Killing existing agent process with SIGKILL: ${pid}`);
+  logInfo(`AgentBravo process=kill signal=SIGKILL pid=${pid}`);
   const message = trySignalProcess(pid, "SIGKILL");
   if (message) {
-    logWarning(`Failed to send SIGKILL to agent process ${pid}: ${message}`);
+    logWarning(
+      `AgentBravo process=signal-failed signal=SIGKILL pid=${pid} error=${message}`,
+    );
     if (processExists(pid)) {
       return;
     }
@@ -292,7 +300,7 @@ export async function startAgentProcess(): Promise<void> {
   agentProcess.unref();
 
   fs.writeFileSync(AgentFiles.linux.agentPid, `${agentProcess.pid}\n`, "utf8");
-  logInfo(`Agent process started with PID: ${agentProcess.pid}`);
+  logInfo(`AgentBravo process=started pid=${agentProcess.pid}`);
 
   const { matched } = await waitForCondition(
     () => fs.existsSync(AgentFiles.linux.agentStatus),
@@ -301,31 +309,33 @@ export async function startAgentProcess(): Promise<void> {
   );
 
   if (!matched) {
-    logWarning("Agent initialization timed out");
+    logWarning("AgentBravo process=init status=timeout");
     return;
   }
 
-  logInfo("Agent initialized successfully");
+  logInfo("AgentBravo process=init status=ready");
 }
 
 export async function stopAgentProcess(): Promise<void> {
   const pid = readPidFile(AgentFiles.linux.agentPid);
   if (!pid) {
-    logWarning("agent.pid not found");
+    logWarning("AgentBravo process=stop status=pid-not-found");
     return;
   }
 
   if (!processExists(pid)) {
-    logInfo("Agent process is not running");
+    logInfo(`AgentBravo process=stop status=not-running pid=${pid}`);
     removePidFile(AgentFiles.linux.agentPid);
     return;
   }
 
-  logInfo(`Sending SIGTERM to agent process: ${pid}`);
+  logInfo(`AgentBravo process=stop signal=SIGTERM pid=${pid}`);
   {
     const message = trySignalProcess(pid, "SIGTERM");
     if (message) {
-      logWarning(`Failed to send SIGTERM to agent process ${pid}: ${message}`);
+      logWarning(
+        `AgentBravo process=signal-failed signal=SIGTERM pid=${pid} error=${message}`,
+      );
       if (!processExists(pid)) {
         removePidFile(AgentFiles.linux.agentPid);
       }
@@ -340,19 +350,19 @@ export async function stopAgentProcess(): Promise<void> {
   );
 
   if (matched) {
-    logInfo(`Agent process stopped gracefully: ${pid}`);
+    logInfo(`AgentBravo process=stopped mode=graceful pid=${pid}`);
     removePidFile(AgentFiles.linux.agentPid);
     return;
   }
 
-  logWarning(
-    "Timed out waiting for agent process to stop; force killing agent",
-  );
+  logWarning("AgentBravo process=stop status=timeout next_signal=SIGKILL");
 
   if (processExists(pid)) {
     const message = trySignalProcess(pid, "SIGKILL");
     if (message) {
-      logWarning(`Failed to send SIGKILL to agent process ${pid}: ${message}`);
+      logWarning(
+        `AgentBravo process=signal-failed signal=SIGKILL pid=${pid} error=${message}`,
+      );
     }
   }
 
@@ -363,9 +373,9 @@ export async function stopAgentProcess(): Promise<void> {
   );
 
   if (killed) {
-    logInfo(`Agent process force stopped: ${pid}`);
+    logInfo(`AgentBravo process=stopped mode=forced pid=${pid}`);
   } else {
-    logWarning(`Agent process is still running after SIGKILL: ${pid}`);
+    logWarning(`AgentBravo process=stop status=still-running pid=${pid}`);
   }
 
   removePidFile(AgentFiles.linux.agentPid);

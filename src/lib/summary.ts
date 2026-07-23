@@ -33,28 +33,32 @@ export async function appendJobSummary(params: {
     );
   }
 
-  logInfo(`Summary URL: ${summaryUrl.toString()}`);
+  logInfo(
+    `Summary action=fetch url=${summaryUrl.toString()} environment=${params.environment} correlation_id=${params.correlationId}`,
+  );
 
   try {
     const { statusCode, body } = await getWithRetry(summaryUrl);
     if (String(statusCode) === "200" && body) {
       if (!RuntimeConfig.stepSummaryPath) {
-        logWarning("GITHUB_STEP_SUMMARY is not set; skipping summary write");
+        logWarning(
+          "Summary action=write status=skipped reason=missing-step-summary-path",
+        );
         return;
       }
 
       fs.appendFileSync(RuntimeConfig.stepSummaryPath, body, "utf8");
-      logInfo("Summary added to job output");
+      logInfo("Summary action=write status=completed");
       return;
     }
 
     logWarning(
-      `Failed to fetch summary (HTTP ${statusCode}) or no content available`,
+      `Summary action=fetch status=failed http_status=${statusCode} has_body=${body ? "true" : "false"}`,
     );
   } catch (error) {
     const message =
       error instanceof Error && error.message ? error.message : "unknown";
-    logWarning(`Failed to fetch summary: ${message}`);
+    logWarning(`Summary action=fetch status=error error=${message}`);
   }
 }
 
