@@ -20,28 +20,28 @@ export async function resolveApiKey(
 ): Promise<string> {
   const envApiKey = ApiKeyConfig.envApiKey;
   if (envApiKey) {
-    logInfo("Using API key from environment");
+    logInfo("ApiKey source=environment");
     return envApiKey;
   }
 
   const roleArn = ApiKeyConfig.roleArn;
   if (!roleArn) {
     logWarning(
-      "STEP_API_KEY_ROLE_ARN is not set; skipping AWS Secrets Manager API key lookup",
+      "ApiKey status=skipped source=secrets-manager reason=missing-role-arn",
     );
     return "";
   }
 
   if (!options.owner) {
     logWarning(
-      "GitHub owner was not provided; skipping AWS Secrets Manager API key lookup because the OrgName session tag is required",
+      "ApiKey status=skipped source=secrets-manager reason=missing-owner",
     );
     return "";
   }
 
   const secretName = ApiKeyConfig.secretName.replace(/<owner>/g, options.owner);
 
-  logInfo(`Using API key from AWS Secrets Manager secret: ${secretName}`);
+  logInfo(`ApiKey source=secrets-manager secret_name=${secretName}`);
   return fetchApiKeyFromSecret({
     roleArn,
     secretName,

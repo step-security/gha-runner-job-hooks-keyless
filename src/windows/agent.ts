@@ -198,12 +198,14 @@ export async function installWindowsAgent(): Promise<void> {
       currentSha256 === expectedSha256 &&
       fs.existsSync(AgentFiles.windows.agentBinary)
     ) {
-      logInfo(`Windows agent already at serving sha ${expectedSha256}`);
+      logInfo(
+        `WindowsAgent status=already-serving version=${release.tag || "unknown"} sha256=${expectedSha256}`,
+      );
       return;
     }
   } else if (fs.existsSync(AgentFiles.windows.agentBinary)) {
     logInfo(
-      `Windows agent already installed at ${AgentFiles.windows.agentBinary}; skipping reinstall`,
+      `WindowsAgent status=already-installed binary=${AgentFiles.windows.agentBinary}`,
     );
     return;
   }
@@ -252,7 +254,7 @@ export async function startWindowsAgentProcess(): Promise<void> {
     const message = trySignalProcess(existingPid, "SIGKILL");
     if (message) {
       logWarning(
-        `Failed to send SIGKILL to Windows agent process ${existingPid}: ${message}`,
+        `WindowsAgent process=signal-failed signal=SIGKILL pid=${existingPid} error=${message}`,
       );
       if (processExists(existingPid)) {
         return;
@@ -294,7 +296,7 @@ export async function startWindowsAgentProcess(): Promise<void> {
     `${agentProcess.pid}\n`,
     "utf8",
   );
-  logInfo(`Windows agent process started with PID: ${agentProcess.pid}`);
+  logInfo(`WindowsAgent process=started pid=${agentProcess.pid}`);
 
   const { matched } = await waitForCondition(
     () => fs.existsSync(AgentFiles.windows.agentStatus),
@@ -303,7 +305,7 @@ export async function startWindowsAgentProcess(): Promise<void> {
   );
 
   if (!matched) {
-    logWarning("Windows agent initialization timed out");
+    logWarning("WindowsAgent process=init status=timeout");
     printFileIfExists(AgentFiles.windows.agentLog, {
       groupTitle: "[StepSecurity] Windows HardenRunner logs",
     });
@@ -320,22 +322,22 @@ export async function startWindowsAgentProcess(): Promise<void> {
 export async function stopWindowsAgentProcess(): Promise<void> {
   const pid = readPidFile(AgentFiles.windows.agentPid);
   if (!pid) {
-    logWarning("Windows agent PID file not found");
+    logWarning("WindowsAgent process=stop status=pid-not-found");
     return;
   }
 
   if (!processExists(pid)) {
-    logInfo("Windows agent process is not running");
+    logInfo(`WindowsAgent process=stop status=not-running pid=${pid}`);
     removePidFile(AgentFiles.windows.agentPid);
     return;
   }
 
-  logInfo(`Sending SIGINT to Windows agent process: ${pid}`);
+  logInfo(`WindowsAgent process=stop signal=SIGINT pid=${pid}`);
   {
     const message = trySignalProcess(pid, "SIGINT");
     if (message) {
       logWarning(
-        `Failed to send SIGINT to Windows agent process ${pid}: ${message}`,
+        `WindowsAgent process=signal-failed signal=SIGINT pid=${pid} error=${message}`,
       );
       if (!processExists(pid)) {
         removePidFile(AgentFiles.windows.agentPid);
@@ -350,18 +352,18 @@ export async function stopWindowsAgentProcess(): Promise<void> {
     1000,
   );
   if (matched) {
-    logInfo(`Windows agent process stopped gracefully: ${pid}`);
+    logInfo(`WindowsAgent process=stopped mode=graceful pid=${pid}`);
     removePidFile(AgentFiles.windows.agentPid);
     return;
   }
 
-  logWarning("Windows agent graceful shutdown timed out; forcing termination");
+  logWarning("WindowsAgent process=stop status=timeout next_signal=SIGKILL");
 
   if (processExists(pid)) {
     const message = trySignalProcess(pid, "SIGKILL");
     if (message) {
       logWarning(
-        `Failed to send SIGKILL to Windows agent process ${pid}: ${message}`,
+        `WindowsAgent process=signal-failed signal=SIGKILL pid=${pid} error=${message}`,
       );
     }
   }
@@ -372,8 +374,12 @@ export async function stopWindowsAgentProcess(): Promise<void> {
     1000,
   );
   if (killed || !processExists(pid)) {
+    logInfo(`WindowsAgent process=stopped mode=forced pid=${pid}`);
     removePidFile(AgentFiles.windows.agentPid);
+    return;
   }
+
+  logWarning(`WindowsAgent process=stop status=still-running pid=${pid}`);
 }
 
 export async function waitForWindowsDoneFile(): Promise<void> {
@@ -384,7 +390,7 @@ export async function waitForWindowsDoneFile(): Promise<void> {
   );
 
   if (!matched) {
-    logWarning("Timed out waiting for Windows agent done.json");
+    logWarning("WindowsAgent wait=done-file status=timeout");
   }
 }
 

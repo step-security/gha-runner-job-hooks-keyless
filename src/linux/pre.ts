@@ -15,7 +15,7 @@ export async function runLinuxPreJobHook(): Promise<void> {
 
   if (mode === "k8s") {
     await runConfiguredEndpointPreflight();
-    logInfo("Running Kubernetes pre-hook");
+    logInfo("Hook phase=pre platform=linux runtime=k8s");
     await runK8sPreJobHook();
     return;
   }
@@ -25,7 +25,7 @@ export async function runLinuxPreJobHook(): Promise<void> {
 
 async function runLinuxVmPreJobHook(): Promise<void> {
   await runConfiguredEndpointPreflight({ requireVmApiKey: true });
-  logInfo("Running Linux agent pre-hook");
+  logInfo("Hook phase=pre platform=linux runtime=vm");
   ensureLinuxAgentRoot();
   await buildSharedAgentJsonForCurrentJob({
     agentJsonPath: AgentFiles.linux.agentJson,
@@ -33,5 +33,5 @@ async function runLinuxVmPreJobHook(): Promise<void> {
   });
   await ensureLatestBravoLinuxAgent();
   await startAgentProcess();
-  logInfo("Finished Linux agent pre-hook");
+  logInfo("Hook phase=pre platform=linux runtime=vm status=completed");
 }
