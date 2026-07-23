@@ -31,9 +31,7 @@ export async function runConfiguredEndpointPreflight(
   const configFailures = collectConfigFailures(options);
   const endpoints = collectConfiguredEndpoints(options);
 
-  logInfo(
-    `Endpoint preflight checking ${endpoints.length} configured endpoint(s)`,
-  );
+  logInfo(`Preflight action=start endpoint_count=${endpoints.length}`);
 
   const endpointFailures = (
     await Promise.all(
@@ -69,7 +67,7 @@ function collectConfigFailures(
     !ApiKeyConfig.roleArn.trim()
   ) {
     failures.push(
-      "STEP_API_KEY or STEP_API_KEY_ROLE_ARN must be set; skipping agent configuration and install",
+      "Preflight status=config-invalid reason=missing-api-key-or-role-arn",
     );
   }
 
@@ -80,7 +78,7 @@ function collectConfigFailures(
   const artifactoryValueCount = artifactoryValues.filter(Boolean).length;
   if (artifactoryValueCount > 0 && artifactoryValueCount < artifactoryValues.length) {
     failures.push(
-      "STEP_ARTIFACTORY_BASE and STEP_ARTIFACTORY_REPO must be set together for Artifactory property-search mode",
+      "Preflight status=config-invalid reason=partial-artifactory-config",
     );
   }
 
@@ -164,20 +162,26 @@ async function preflightEndpoint(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new EndpointPreflightError(
-      `Configured endpoint is invalid: ${label} (${String(url)}). ${message}`,
+      `Preflight status=invalid-endpoint label=${toLogValue(label)} url=${toLogValue(String(url))} error=${toLogValue(message)}`,
     );
   }
 
-  logInfo(`Preflight checking ${label}: ${parsedUrl.origin}`);
+  logInfo(
+    `Preflight action=check label=${toLogValue(label)} origin=${toLogValue(parsedUrl.origin)}`,
+  );
 
   try {
     await probeEndpoint(parsedUrl);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new EndpointPreflightError(
-      `Required endpoint is not reachable: ${label} (${parsedUrl.origin}). ${message}`,
+      `Preflight status=unreachable label=${toLogValue(label)} origin=${toLogValue(parsedUrl.origin)} error=${toLogValue(message)}`,
     );
   }
+}
+
+function toLogValue(value: string): string {
+  return JSON.stringify(value);
 }
 
 function probeEndpoint(url: URL): Promise<void> {
