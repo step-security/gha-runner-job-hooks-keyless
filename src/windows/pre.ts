@@ -9,9 +9,9 @@ import {
 } from "./agent";
 
 export async function runWindowsPreJobHook(): Promise<void> {
-  logInfo("Running Windows agent pre-hook");
+  logInfo("Hook phase=pre platform=windows runtime=vm");
   if (process.arch === "arm64") {
-    logInfo("Windows arm64 runners are not supported");
+    logInfo("Hook phase=pre platform=windows runtime=vm status=skipped reason=unsupported-arch arch=arm64");
     return;
   }
   await runConfiguredEndpointPreflight({ requireVmApiKey: true });
@@ -25,5 +25,5 @@ export async function runWindowsPreJobHook(): Promise<void> {
   });
   await installWindowsAgent();
   await startWindowsAgentProcess();
-  logInfo("Finished Windows agent pre-hook");
+  logInfo("Hook phase=pre platform=windows runtime=vm status=completed");
 }

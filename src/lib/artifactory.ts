@@ -41,7 +41,7 @@ export async function resolveServingArtifactByProperties(
   const results = await searchArtifactsByProperties(config, selectors);
   if (results.length !== 1) {
     throw new Error(
-      `Expected exactly one Artifactory artifact for selectors ${JSON.stringify(selectors)}, found ${results.length}`,
+      `Artifactory status=invalid-result reason=unexpected-result-count selectors=${toLogValue(JSON.stringify(selectors))} count=${results.length}`,
     );
   }
 
@@ -55,13 +55,13 @@ export async function resolveServingArtifactByProperties(
 
   if (!name || !version || !sha256 || !downloadUri) {
     throw new Error(
-      `Artifactory result for selectors ${JSON.stringify(selectors)} is missing path, checksum, or downloadUri`,
+      `Artifactory status=invalid-result reason=missing-fields selectors=${toLogValue(JSON.stringify(selectors))}`,
     );
   }
 
   if (!/^[0-9a-fA-F]{64}$/.test(sha256)) {
     throw new Error(
-      `Artifactory result for selectors ${JSON.stringify(selectors)} has invalid sha256: ${sha256}`,
+      `Artifactory status=invalid-result reason=invalid-sha256 selectors=${toLogValue(JSON.stringify(selectors))} sha256=${toLogValue(sha256)}`,
     );
   }
 
@@ -89,7 +89,9 @@ export async function searchArtifactsByProperties(
   params.append("repos", normalizedConfig.repo);
 
   const url = `${normalizedConfig.base}/api/search/prop?${params.toString()}`;
-  logInfo(`Searching Artifactory properties at ${url}`);
+  logInfo(
+    `Artifactory action=search url=${toLogValue(url)} repo=${toLogValue(normalizedConfig.repo)} selectors=${toLogValue(JSON.stringify(selectors))}`,
+  );
   const { statusCode, body } = await getWithRetry(new URL(url), {
     "X-Result-Detail": "properties,info",
     "User-Agent": "stepsecurity-jobhooks",
@@ -97,7 +99,7 @@ export async function searchArtifactsByProperties(
 
   if (String(statusCode) !== "200") {
     throw new Error(
-      `Artifactory property search failed for selectors ${JSON.stringify(selectors)}: status ${statusCode}`,
+      `Artifactory action=search status=failed selectors=${toLogValue(JSON.stringify(selectors))} http_status=${statusCode}`,
     );
   }
 
@@ -113,7 +115,9 @@ export async function downloadArtifact(
   fs.mkdirSync(destinationDir, { recursive: true });
 
   const tempPath = `${destinationPath}.tmp.${process.pid}`;
-  logInfo(`Downloading Artifactory artifact ${serving.version}/${serving.name}`);
+  logInfo(
+    `Artifactory action=download version=${toLogValue(serving.version)} asset=${toLogValue(serving.name)} destination=${toLogValue(destinationPath)}`,
+  );
 
   try {
     if (!(await downloadFile(serving.url, tempPath))) {
@@ -147,4 +151,8 @@ export function assetChecksumSha256(checksum?: string): string {
   }
 
   return checksum.slice("sha256:".length).toLowerCase();
+}
+
+function toLogValue(value: string): string {
+  return JSON.stringify(value);
 }

@@ -16,32 +16,32 @@ import {
 } from "./agent";
 
 export async function runWindowsPostJobHook(): Promise<void> {
-  logInfo("Running Windows agent post-hook");
+  logInfo("Hook phase=post platform=windows runtime=vm");
 
   if (!fs.existsSync(AgentRuntimeConfig.windowsRoot)) {
     logInfo(
-      `Windows cleanup: ${AgentRuntimeConfig.windowsRoot} not found; agent was not installed. Skipping.`,
+      `Hook phase=post platform=windows runtime=vm status=skipped reason=missing-agent-root path=${AgentRuntimeConfig.windowsRoot}`,
     );
     return;
   }
 
   if (windowsPostEventExists()) {
-    logInfo("Windows post step already executed, skipping");
+    logInfo("Hook phase=post platform=windows runtime=vm status=skipped reason=already-executed");
     return;
   }
 
   if (process.arch === "arm64") {
-    logInfo("Windows arm64 runners are not supported");
+    logInfo("Hook phase=post platform=windows runtime=vm status=skipped reason=unsupported-arch arch=arm64");
     return;
   }
 
   if (!isAgentRunning(AgentFiles.windows.agentPid)) {
-    logWarning("Skipping summary because Windows agent PID file was not found");
+    logWarning("Hook phase=post platform=windows runtime=vm status=skipped reason=missing-agent-pid");
     cleanupWindowsJobArtifacts();
     return;
   }
 
-  logInfo("Sending query user command");
+  logInfo("Hook phase=post platform=windows runtime=vm action=query-user");
   const p = cp.spawn(
     "powershell.exe",
     [
@@ -54,11 +54,11 @@ export async function runWindowsPostJobHook(): Promise<void> {
   );
   p.unref();
 
-  logInfo("Writing post event json");
+  logInfo("Hook phase=post platform=windows runtime=vm action=write-post-event");
   writeWindowsPostEvent();
 
   if (windowsAgentInstalled()) {
-    logInfo("Waiting for done file");
+    logInfo("Hook phase=post platform=windows runtime=vm action=wait-done-file");
     await waitForWindowsDoneFile();
   }
 
@@ -66,5 +66,5 @@ export async function runWindowsPostJobHook(): Promise<void> {
   await appendWindowsSummary();
   printWindowsAgentLogs();
   cleanupWindowsJobArtifacts();
-  logInfo("Finished Windows agent post-hook");
+  logInfo("Hook phase=post platform=windows runtime=vm status=completed");
 }

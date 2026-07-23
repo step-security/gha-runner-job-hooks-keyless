@@ -92,9 +92,7 @@ async function loadPolicyConfig(
   fetchStatus: PolicyStoreFetchResult["status"];
 }> {
   if (!apiKey) {
-    logWarning(
-      "API key is not set; defaulting to audit mode without policy fetch",
-    );
+    logWarning("Policy status=skipped reason=missing-api-key fallback=audit");
     return { hasPolicy: false, config: null, fetchStatus: "error" };
   }
 
@@ -117,30 +115,33 @@ async function loadPolicyConfig(
 export async function buildSharedAgentJsonForCurrentJob(
   options: BuildAgentConfigOptions,
 ): Promise<string> {
+  const apiKey = await resolveApiKey({ owner: RuntimeConfig.owner });
+  if (apiKey) {
+    logInfo("ApiKey status=resolved");
+  } else {
+    logWarning("ApiKey status=missing");
+    throw new Error("ApiKey status=missing");
+  }
+
   const correlationId = randomUUID();
+  // marker log
   logInfo(
     `Generated job correlationId for self-hosted agent: ${correlationId}`,
   );
 
-  const apiKey = await resolveApiKey({ owner: RuntimeConfig.owner });
-  if (apiKey) {
-    logInfo("API key resolved successfully");
-  } else {
-    logWarning("API key could not be resolved");
-  }
   const agentConfig = createBaseAgentConfig(correlationId, apiKey, options);
-  logInfo("Checking for policy from policy store...");
+  logInfo("Policy action=fetch source=policy-store");
   const { hasPolicy, config, fetchStatus } = await loadPolicyConfig(
     correlationId,
     apiKey,
   );
 
   if (hasPolicy) {
-    logInfo(`Policy found: ${config?.policyName || "unnamed"}`);
+    logInfo(`Policy status=found name=${config?.policyName || "unnamed"}`);
   } else if (fetchStatus === "not_found") {
-    logInfo("No policy configured from policy store");
+    logInfo("Policy status=not-found");
   } else {
-    logWarning("Policy fetch failed; defaulting to audit mode");
+    logWarning("Policy status=fetch-failed fallback=audit");
   }
 
   if (config) {
@@ -153,7 +154,7 @@ export async function buildSharedAgentJsonForCurrentJob(
   }
 
   if (options.egressPolicyAlwaysAudit) {
-    logInfo("Overriding egress_policy to audit for this agent configuration");
+    logInfo("AgentConfig override=egress_policy value=audit");
     agentConfig.egress_policy = "audit";
   }
 

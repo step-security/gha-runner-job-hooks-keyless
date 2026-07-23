@@ -7,8 +7,9 @@ import { runWindowsPostJobHook } from "./windows/post";
 import { HookVersion } from "./version";
 
 async function main(): Promise<void> {
-  console.log("[StepSecurity] post job-hook");
-  console.log(`[StepSecurity] job-hook version=${HookVersion}`);
+  console.log("[StepSecurity] post job-hook"); // marker log
+  console.log(`[StepSecurity] JobHook version=${HookVersion}`);
+
   await runConfiguredEndpointPreflight({ stepSecurityApiOnly: true });
 
   if (process.platform === "linux") {
