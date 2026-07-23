@@ -14,6 +14,23 @@ API key from AWS Secrets Manager and refreshes it periodically, so key
 rotation requires no Helm upgrade or pod restart, and no involvement from
 the DevOps team.
 
+## How this compares to the VM runner setup
+
+The VM and Kubernetes (ARC) setups share the same AWS access model, differing only in how the IAM role is assumed. Both fetch the StepSecurity API key from AWS Secrets Manager by assuming an IAM role and calling `GetSecretValue`. On a VM the runner already has AWS credentials and calls `AssumeRole`. On Kubernetes there is no stored credential, so the pod proves its identity with an OIDC token and calls `AssumeRoleWithWebIdentity` (IRSA).
+
+| AWS dimension | VM self-hosted runner | Kubernetes runner (ARC), keyless |
+| --- | --- | --- |
+| STS operation | `AssumeRole` | `AssumeRoleWithWebIdentity` |
+| Bootstrap credentials | Runner needs existing AWS credentials (EC2 instance profile, env, and similar) able to call `AssumeRole` | None (keyless). The pod presents its projected service-account OIDC token |
+| Identity presented to AWS | Runner's IAM principal. The StepSecurity org is passed as an `OrgName` STS session tag | Kubernetes service account (`system:serviceaccount:<namespace>:hardenrunner`) as an OIDC JWT |
+| Role trust policy trusts | Runner's IAM principal | Cluster's OIDC provider, with `sub` and `aud` conditions matching the service account |
+| OIDC provider | Not used | Cluster issuer registered in the account that holds the role (one time, Part B1) |
+| Secret name | `stepsecurity/orgs/<owner>/vm-api-key` | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` |
+| Who calls AWS | Pre-job hook, per job (temporary 900s credentials) | Harden-Runner DaemonSet, refreshed periodically, not the hook |
+| Cross-account | Possible with the same pattern (role trusts the runner account) | First class: role and secret live in the Central account, cluster in another, trust via OIDC |
+
+The rest of this guide covers the one-time IAM, OIDC, and Helm setup that makes the `AssumeRoleWithWebIdentity` path work.
+
 ## Responsibilities at a glance
 
 | Phase | Task | Team | Account |
@@ -36,6 +53,25 @@ the DevOps team.
   from the cluster's region).
 
 Neither team needs credentials for the other team's account at any point.
+
+```mermaid
+sequenceDiagram
+    participant D as DevOps team<br/>(DevOps account)
+    participant C as Central team<br/>(Central account)
+
+    Note over D: A1 Gather cluster OIDC issuer,<br/>namespace, SA, org name, region
+    D->>C: Handoff: OIDC issuer URL, namespace,<br/>service account, org name, secret region
+    Note over C: B1 Register cluster OIDC provider in IAM
+    Note over C: B2 Create API key secret in Secrets Manager
+    Note over C: B3 Create IAM role<br/>(trust + permission policy)
+    C->>D: Handoff: IAM role ARN, secret region
+    Note over D: C1 Set Helm values with role ARN, apply
+    Note over D: C2 Verify wiring and pod logs
+
+    Note over C: Ongoing: key rotation<br/>(no DevOps action needed)
+    D->>C: Ongoing: notify on cluster recreation<br/>(issuer change)
+    Note over C: Update OIDC provider + trust policy
+```
 
 ## Why the role must live in the Central account
 
