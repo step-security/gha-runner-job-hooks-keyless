@@ -15,28 +15,28 @@ export async function runLinuxPostJobHook(): Promise<void> {
   const mode = detectLinuxRuntimeMode();
 
   if (mode === "k8s") {
-    logInfo("Running Kubernetes post-hook");
+    logInfo("Hook phase=post platform=linux runtime=k8s");
     await runK8sPostJobHook();
     return;
   }
 
   if (!isAgentRunning(AgentFiles.linux.agentPid)) {
-    logWarning("Skipping summary because agent.pid was not found");
+    logWarning("Hook phase=post platform=linux runtime=vm status=skipped reason=missing-agent-pid");
     cleanupLinuxJobArtifacts();
     return;
   }
 
-  logInfo("Running Linux agent post-hook");
+  logInfo("Hook phase=post platform=linux runtime=vm");
   const correlationId = readCorrelationIdFromAgentJson(
     AgentFiles.linux.agentJson,
   );
   if (correlationId) {
-    logInfo(`Found correlation ID from agent.json: ${correlationId}`);
+    logInfo(`Hook phase=post platform=linux runtime=vm correlation_id=${correlationId}`);
   }
 
   await stopAgentProcess();
   await appendLinuxSummary();
   printLinuxAgentLogs();
   cleanupLinuxJobArtifacts();
-  logInfo("Finished Linux agent post-hook");
+  logInfo("Hook phase=post platform=linux runtime=vm status=completed");
 }
