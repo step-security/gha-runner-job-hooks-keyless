@@ -1,4 +1,4 @@
-# Kubernetes ARC Harden-Runner: Keyless API Key Setup (Cross-Account)
+# Kubernetes ARC Harden-Runner: Keyless API Key Setup
 
 This guide describes the one-time setup required to enable keyless mode for
 Kubernetes runners (ARC) when the **EKS cluster and the secret live in
