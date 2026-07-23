@@ -7,7 +7,7 @@ different AWS accounts**, and splits the work by team:
 | Component | Account | Owned by |
 | --- | --- | --- |
 | EKS cluster + Harden-Runner DaemonSet + Helm release | **DevOps account** (`111111111111` in examples) | DevOps team |
-| Secrets Manager secret + IAM role + OIDC provider registration | **SEC account** (`222222222222` in examples) | SEC team |
+| Secrets Manager secret + IAM role + OIDC provider registration | **Central account** (`222222222222` in examples) | Central team |
 
 In keyless mode, the Harden-Runner agent DaemonSet retrieves its StepSecurity
 API key from AWS Secrets Manager and refreshes it periodically, so key
@@ -18,38 +18,38 @@ the DevOps team.
 
 | Phase | Task | Team | Account |
 | --- | --- | --- | --- |
-| A1 | Gather cluster OIDC issuer + SA details, hand off to SEC | DevOps | DevOps |
-| B1 | Register the cluster's OIDC provider in IAM | SEC | SEC |
-| B2 | Create the API key secret in Secrets Manager | SEC | SEC |
-| B3 | Create the IAM role (trust + permission policy), hand role ARN to DevOps | SEC | SEC |
-| C1 | Update Helm values with the SEC role ARN and apply | DevOps | DevOps |
+| A1 | Gather cluster OIDC issuer + SA details, hand off to Central | DevOps | DevOps |
+| B1 | Register the cluster's OIDC provider in IAM | Central | Central |
+| B2 | Create the API key secret in Secrets Manager | Central | Central |
+| B3 | Create the IAM role (trust + permission policy), hand role ARN to DevOps | Central | Central |
+| C1 | Update Helm values with the Central role ARN and apply | DevOps | DevOps |
 | C2 | Verify wiring and pod logs | DevOps | DevOps (cluster) |
-| Ongoing | Key rotation | SEC | SEC |
-| Ongoing | Notify SEC on cluster recreation (issuer change) | DevOps | n/a |
-| Ongoing | Update provider + trust policy on issuer change | SEC | SEC |
+| Ongoing | Key rotation | Central | Central |
+| Ongoing | Notify Central on cluster recreation (issuer change) | DevOps | n/a |
+| Ongoing | Update provider + trust policy on issuer change | Central | Central |
 
 **Handoffs between teams:**
 
-- DevOps → SEC (before Part B): OIDC issuer URL, Kubernetes namespace,
+- DevOps → Central (before Part B): OIDC issuer URL, Kubernetes namespace,
   service account name, StepSecurity org name, desired secret region.
-- SEC → DevOps (before Part C): IAM role ARN, secret region (if different
+- Central → DevOps (before Part C): IAM role ARN, secret region (if different
   from the cluster's region).
 
 Neither team needs credentials for the other team's account at any point.
 
-## Why the role must live in the SEC account
+## Why the role must live in the Central account
 
 The agent looks up the secret **by name**
 (`stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`), not by full ARN. A
 name-only `GetSecretValue` call resolves in the account of the credentials
 making the call. Therefore:
 
-- A role in the DevOps account combined with a resource policy on the SEC
+- A role in the DevOps account combined with a resource policy on the Central
   secret **will not work**: the name would resolve in the DevOps account
   and the agent would get `ResourceNotFoundException`.
-- Instead, the pod assumes a role **in the SEC account** directly, using
+- Instead, the pod assumes a role **in the Central account** directly, using
   IRSA's cross-account trust. Once the role is assumed, the secret lookup
-  and KMS decryption are same-account operations inside SEC, so the default
+  and KMS decryption are same-account operations inside Central, so the default
   `aws/secretsmanager` KMS key works and no customer-managed key or resource
   policy is required.
 
@@ -58,20 +58,20 @@ making the call. Therefore:
 1. The Harden-Runner agent DaemonSet in the DevOps cluster authenticates to
    AWS using IAM Roles for Service Accounts (IRSA).
 2. The DevOps cluster's OIDC issuer is registered as an identity provider in
-   the **SEC** account's IAM (Part B1). Kubernetes issues each pod a
+   the **Central** account's IAM (Part B1). Kubernetes issues each pod a
    short-lived signed JWT for its service account.
-3. Because the `hardenrunner` service account is annotated with the SEC
+3. Because the `hardenrunner` service account is annotated with the Central
    account's role ARN, EKS automatically mounts the token into the DaemonSet
    pods and points the AWS SDK at it. The EKS webhook does not care that the
    ARN belongs to another account.
 4. The agent calls STS `AssumeRoleWithWebIdentity`, presenting the token.
    STS verifies the token's signature against the OIDC provider registered
-   in the SEC account and checks the role's trust policy, which only matches
+   in the Central account and checks the role's trust policy, which only matches
    `system:serviceaccount:<namespace>:hardenrunner` from this specific
    cluster's issuer.
-5. STS returns temporary credentials for the SEC role. The role's only
+5. STS returns temporary credentials for the Central role. The role's only
    permission is `secretsmanager:GetSecretValue` on the one API key secret
-   in the SEC account, so that is all the pod can do with them.
+   in the Central account, so that is all the pod can do with them.
 6. On startup, and every few hours after, the agent reads the API key from
    the secret. The refreshed key takes effect immediately, with no restarts.
 
@@ -79,12 +79,12 @@ making the call. Therefore:
 sequenceDiagram
     participant Pod as Harden-Runner pod (DevOps cluster)<br/>(SA: hardenrunner)
     participant STS as AWS STS
-    participant SM as Secrets Manager (SEC account)
+    participant SM as Secrets Manager (Central account)
 
     Note over Pod: SA token auto-mounted by EKS<br/>at pod startup (projected volume)
-    Pod->>STS: AssumeRoleWithWebIdentity<br/>(token + SEC role ARN from SA annotation)
-    STS->>STS: Verify token against OIDC provider<br/>registered in SEC account,<br/>check trust policy sub/aud match
-    STS-->>Pod: Temporary credentials<br/>for the SEC IAM role
+    Pod->>STS: AssumeRoleWithWebIdentity<br/>(token + Central role ARN from SA annotation)
+    STS->>STS: Verify token against OIDC provider<br/>registered in Central account,<br/>check trust policy sub/aud match
+    STS-->>Pod: Temporary credentials<br/>for the Central IAM role
     Pod->>SM: GetSecretValue<br/>(stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key)
     SM-->>Pod: api_key
     Note over Pod: Uses the key for the StepSecurity API,<br/>repeats this fetch every 3 hours
@@ -95,12 +95,12 @@ sequenceDiagram
 - **DevOps team:** admin access to the EKS cluster and permission to run
   `aws eks describe-cluster` in the DevOps account; ability to upgrade the
   Harden-Runner Helm release.
-- **SEC team:** IAM and Secrets Manager permissions in the SEC account
+- **Central team:** IAM and Secrets Manager permissions in the Central account
   (create OIDC provider, create role, create secret).
 - Your StepSecurity organization name (referred to as `<ORG_NAME>` below).
 - The API key for Kubernetes runners (ARC), provided by StepSecurity. It is held
   by whichever team manages the StepSecurity relationship, entered by the
-  SEC team in Part B2. StepSecurity issues two keys per scenario (a primary
+  Central team in Part B2. StepSecurity issues two keys per scenario (a primary
   and a secondary key); use the primary key here. If you also use
   Harden-Runner on VM runners, that scenario has its own separate key pair
   and secret (`stepsecurity/orgs/github-orgs/<ORG_NAME>/vm-api-key`); the
@@ -122,7 +122,7 @@ echo "$OIDC_ISSUER"
 # e.g. https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE
 ```
 
-Hand the following to the SEC team:
+Hand the following to the Central team:
 
 | Item | Value |
 | --- | --- |
@@ -130,7 +130,7 @@ Hand the following to the SEC team:
 | Namespace | `kube-system` (or wherever the chart is installed) |
 | Service account name | `hardenrunner` (or your override via `serviceAccount.name` / `fullnameOverride`) |
 | StepSecurity org name | `<ORG_NAME>` |
-| Cluster region | `$AWS_REGION` (so SEC can create the secret in the same region, or tell you otherwise) |
+| Cluster region | `$AWS_REGION` (so Central can create the secret in the same region, or tell you otherwise) |
 
 > No IAM changes are needed in the DevOps account for this setup. The
 > cluster's OIDC provider does **not** need to be registered in the DevOps
@@ -139,9 +139,9 @@ Hand the following to the SEC team:
 
 ---
 
-# Part B: SEC team: provider, secret, and role
+# Part B: Central team: provider, secret, and role
 
-**All commands in this part run with SEC account credentials.** Set the
+**All commands in this part run with Central account credentials.** Set the
 variables from the DevOps handoff first:
 
 ```bash
@@ -158,14 +158,14 @@ export DEVOPS_ACCOUNT_ID="111111111111"         # for the role description only
 
 ## B1: Register the cluster's OIDC provider
 
-The issuer URL is public; registering it makes the SEC account willing to
+The issuer URL is public; registering it makes the Central account willing to
 verify tokens issued by that cluster.
 
 Check whether it is already registered:
 
 ```bash
 aws iam list-open-id-connect-providers | grep "$OIDC_PROVIDER" \
-  || echo "No OIDC provider in SEC account - register one (below)"
+  || echo "No OIDC provider in Central account - register one (below)"
 ```
 
 If missing, register it (one-time per cluster, per account):
@@ -181,7 +181,7 @@ aws iam create-open-id-connect-provider \
 AWS pins the root CA for EKS OIDC endpoints.)
 
 > **Note:** `eksctl utils associate-iam-oidc-provider` cannot be used here;
-> it registers the provider in the cluster's own account. For the SEC
+> it registers the provider in the cluster's own account. For the Central
 > account, use the raw `aws iam create-open-id-connect-provider` call above.
 
 ## B2: Create the secret in Secrets Manager
@@ -216,7 +216,7 @@ aws secretsmanager put-secret-value \
   --region "$SECRET_REGION"
 ```
 
-Because the role that reads this secret also lives in the SEC account (B3),
+Because the role that reads this secret also lives in the Central account (B3),
 the default `aws/secretsmanager` KMS key is sufficient. No secret resource
 policy and no customer-managed KMS key are needed.
 
@@ -227,7 +227,7 @@ The trust policy restricts it to the Harden-Runner service account in the
 DevOps cluster.
 
 **B3a. Create the role with its trust policy.** Two things differ from a
-same-account IRSA trust policy: the `Federated` principal uses the **SEC**
+same-account IRSA trust policy: the `Federated` principal uses the **Central**
 account ID (that is where the provider from B1 lives), while the condition
 keys still use the **DevOps cluster's** issuer path:
 
@@ -308,7 +308,7 @@ part.
 ## C1: Helm values
 
 Add the following to your Harden-Runner Helm values. The service account
-annotation points at the **SEC** account's role ARN; the EKS webhook mounts
+annotation points at the **Central** account's role ARN; the EKS webhook mounts
 the token and sets `AWS_ROLE_ARN` regardless of which account the ARN
 belongs to.
 
@@ -317,13 +317,13 @@ env:
   orgName: "<ORG_NAME>"
   keyless:
     enabled: "true"
-    # Required if the secret's region (from the SEC handoff) differs from
+    # Required if the secret's region (from the Central handoff) differs from
     # the cluster's region. Leave unset if they are the same.
     # region: "us-east-1"
 
 serviceAccount:
   annotations:
-    eks.amazonaws.com/role-arn: "<ROLE_ARN from the SEC team>"
+    eks.amazonaws.com/role-arn: "<ROLE_ARN from the Central team>"
 ```
 
 With keyless mode enabled, the `apiKey` and `apiKeySecretName` values are
@@ -337,7 +337,7 @@ helm upgrade arc-harden-runner <chart> -f values.yaml -n kube-system
 
 ## C2: Verify
 
-First confirm the IRSA wiring: the service account carries the SEC role
+First confirm the IRSA wiring: the service account carries the Central role
 annotation, and EKS injected the AWS credentials into the pods.
 
 ```bash
@@ -351,7 +351,7 @@ kubectl -n "$NAMESPACE" get pod -l app=arc-harden-runner \
   -o jsonpath='{.items[0].spec.containers[0].env[?(@.name=="AWS_ROLE_ARN")].value}'; echo
 ```
 
-Both should print the SEC role ARN. If the second one is empty, the pods
+Both should print the Central role ARN. If the second one is empty, the pods
 predate the annotation; restart them
 (`kubectl -n "$NAMESPACE" rollout restart daemonset -l app=arc-harden-runner`),
 since the credentials are injected only at pod creation.
@@ -372,15 +372,15 @@ The "fix owner" column tells you which team's side the problem is on.
 
 | Symptom in logs | Likely cause | Fix owner |
 | --- | --- | --- |
-| `InvalidIdentityToken` / `No OpenIDConnect provider found in your account` | OIDC provider not registered in the SEC account (B1 skipped, or run against the wrong account) | SEC |
-| `AccessDenied` on `AssumeRoleWithWebIdentity` | Trust policy `Federated` ARN uses the DevOps account ID instead of SEC's, issuer path typo, or `sub` doesn't match the namespace/service account | SEC (values from DevOps handoff) |
-| `AccessDeniedException` on `GetSecretValue` | SEC role missing `secretsmanager:GetSecretValue` on the secret ARN | SEC |
-| `ResourceNotFoundException` | Secret name doesn't match `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`; secret in a different region than the agent queries (`env.keyless.region` unset or wrong); or the secret was created in the DevOps account instead of SEC | SEC (name/region) or DevOps (`env.keyless.region`) |
+| `InvalidIdentityToken` / `No OpenIDConnect provider found in your account` | OIDC provider not registered in the Central account (B1 skipped, or run against the wrong account) | Central |
+| `AccessDenied` on `AssumeRoleWithWebIdentity` | Trust policy `Federated` ARN uses the DevOps account ID instead of Central's, issuer path typo, or `sub` doesn't match the namespace/service account | Central (values from DevOps handoff) |
+| `AccessDeniedException` on `GetSecretValue` | Central role missing `secretsmanager:GetSecretValue` on the secret ARN | Central |
+| `ResourceNotFoundException` | Secret name doesn't match `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`; secret in a different region than the agent queries (`env.keyless.region` unset or wrong); or the secret was created in the DevOps account instead of Central | Central (name/region) or DevOps (`env.keyless.region`) |
 | `orgName is required` | `env.orgName` not set in Helm values | DevOps |
 | No AWS credentials | Service account annotation missing, or pods not restarted after annotating | DevOps |
 
-The SEC team can also confirm end-to-end identity from its side: CloudTrail
-in the SEC account records the `AssumeRoleWithWebIdentity` calls, including
+The Central team can also confirm end-to-end identity from its side: CloudTrail
+in the Central account records the `AssumeRoleWithWebIdentity` calls, including
 the `sub` claim (`system:serviceaccount:kube-system:hardenrunner`), and the
 subsequent `GetSecretValue` calls under the role session. The security
 account retains full visibility into which workload reads the key.
@@ -389,39 +389,39 @@ account retains full visibility into which workload reads the key.
 
 # Ongoing operations
 
-## Key rotation (SEC team)
+## Key rotation (Central team)
 
 Key rotation is unchanged from the same-account flow (see
 `key-rotation-flow-generic.md` in the repository) and is performed entirely
-in the SEC account (`put-secret-value` on the secret). It needs no Helm
+in the Central account (`put-secret-value` on the secret). It needs no Helm
 changes, no pod restarts, and no DevOps involvement; the DaemonSet picks up
 the new key at its next refresh.
 
-## Cluster recreation (DevOps notifies, SEC updates)
+## Cluster recreation (DevOps notifies, Central updates)
 
 If the DevOps cluster is ever rebuilt, its OIDC issuer ID changes and the
 trust breaks: pods will log STS errors and keep retrying.
 
 - **DevOps team:** treat "cluster recreated" as an event that must be
-  communicated to the SEC team, including the new issuer URL (re-run
+  communicated to the Central team, including the new issuer URL (re-run
   Part A).
-- **SEC team:** register the new issuer (B1) and update the role's trust
+- **Central team:** register the new issuer (B1) and update the role's trust
   policy with the new issuer path (B3a, using
   `aws iam update-assume-role-policy`). The old provider registration can
   be deleted once no roles reference it.
 
 Codify both accounts' pieces in IaC (Terraform/CloudFormation) so a cluster
-rebuild updates the SEC-side resources automatically instead of relying on
+rebuild updates the Central-side resources automatically instead of relying on
 a manual handoff.
 
 ## Adding more clusters (joint)
 
-To let the same SEC role serve Harden-Runner in additional DevOps clusters
+To let the same Central role serve Harden-Runner in additional DevOps clusters
 (or additional accounts):
 
 - **DevOps team:** provide the new cluster's issuer URL, namespace, and
   service account name (Part A).
-- **SEC team:** register each new issuer (B1) and add one statement per
+- **Central team:** register each new issuer (B1) and add one statement per
   cluster to the role's trust policy (B3a). Watch the trust policy size
   limit (2,048 characters by default, raisable to 4,096 via Service
   Quotas).
