@@ -105,7 +105,7 @@ refresh_hooks_from_artifactory() {
     downloaded_hook="${tmp_dir}/${hook_name}"
     staged_hook="${agent_base_dir}/${hook_name}"
 
-    log "downloading ${hook_name} from Artifactory"
+    log "downloading ${hook_name} from ${download_uri}"
     if ! curl -fsSL \
       --connect-timeout "${CURL_CONNECT_TIMEOUT_SECONDS}" \
       --max-time "${CURL_MAX_TIME_SECONDS}" \

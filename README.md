@@ -178,7 +178,7 @@ Artifactory serving uses property-based resolution. Set `STEP_ARTIFACTORY_BASE` 
 #### How it works
 
 - When `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO` are set, the hook queries `GET /api/search/prop` with selectors derived from runtime:
-  - common: `ss.serving=true`, `ss.approved=true`
+  - common: `ss.serving=true`
   - Linux: `ss.os=linux`, `ss.arch=amd64|arm64`
   - Windows: `ss.os=windows`, `ss.arch=amd64`
 - The property search must return exactly one result. The hook uses `downloadUri` to download the tarball and `checksums.sha256` to validate it.
@@ -191,7 +191,6 @@ For property-based serving resolution:
 
 1. Upload the agent tarballs to your Artifactory repository.
 2. Set item properties on each artifact:
-   - `ss.approved=true`
    - `ss.os=linux` or `ss.os=windows`
    - `ss.arch=amd64` or `ss.arch=arm64`
    - `ss.sha256=<64-character sha256 hex>`
@@ -211,7 +210,7 @@ Property-based serving resolution:
 - `STEP_ARTIFACTORY_BASE=https://stepsecurity.jfrog.io/artifactory`
 - `STEP_ARTIFACTORY_REPO=jatin-repo1`
 - Query example:
-  - `https://stepsecurity.jfrog.io/artifactory/api/search/prop?ss.serving=true&ss.approved=true&ss.os=windows&ss.arch=amd64&repos=jatin-repo1`
+  - `https://stepsecurity.jfrog.io/artifactory/api/search/prop?ss.serving=true&ss.os=windows&ss.arch=amd64&repos=jatin-repo1`
 
 #### Hosting `pre.js` and `post.js` in Artifactory
 
