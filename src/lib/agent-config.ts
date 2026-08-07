@@ -43,6 +43,7 @@ type BuildAgentConfigOptions = {
   workingDirectory?: string;
   isDebug?: boolean;
   egressPolicyAlwaysAudit?: boolean;
+  logJobDetails?: boolean;
 };
 
 const RuntimeConfig = {
@@ -162,6 +163,11 @@ export async function buildSharedAgentJsonForCurrentJob(
     options.agentJsonPath,
     agentConfig as unknown as Record<string, unknown>,
   );
+
+  if (options.logJobDetails) {
+    logInfo(`Step Security Job Correlation ID: ${agentConfig.correlation_id}`);
+    logInfo(`EgressPolicy: ${agentConfig?.egress_policy || "audit"}`);
+  }
 
   return correlationId;
 }

@@ -19,7 +19,8 @@ async function buildAgentConfig(): Promise<void> {
     isPersistent: false,
     isGithubHosted: true,
     isDebug: false,
-    egressPolicyAlwaysAudit: true,
+    egressPolicyAlwaysAudit: false,
+    logJobDetails: true,
   });
 }
 
