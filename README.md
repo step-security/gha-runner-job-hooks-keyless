@@ -129,6 +129,8 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                                                              |
 | `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                      |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
+| `STEP_WINDOWS_AGENT_SERVICE` | `true`                                    | Run the Windows agent as a Windows service. Set to `false` to run it as a detached child process instead. Service mode requires the runner to be elevated; if service setup fails, the hook falls back to process mode.                                       |
+| `STEP_WINDOWS_SERVICE_NAME`  | `StepSecurityAgent`                       | Name of the Windows service managed by the hook.                                                                                                                                                                                                             |
 | `STEP_ARTIFACTORY_BASE`      | ``                                        | Optional Artifactory base URL for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
 | `STEP_ARTIFACTORY_REPO`      | ``                                        | Optional Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required when using property-based serving resolution.                                                                                                    |
 | `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                                                             |
@@ -142,6 +144,36 @@ The following environment variables can be used to configure the hook behavior:
 Set these values in the wrapper scripts or inject them through your runner configuration before running the hook. On Linux wrapper scripts, use `export STEP_NAME=value`. On Windows wrapper scripts, set them with PowerShell environment assignments such as `$env:STEP_AGENT_ROOT_WINDOWS='C:\agent'`.
 
 Each hook validates configured network endpoints at startup and logs warnings for failures. Pre-job hooks check `STEP_API`, `STEP_TELEMETRY_URL`, `STEP_ARTIFACTORY_BASE` or `ARTIFACTORY_BASE` when set, and AWS STS and Secrets Manager regional endpoints when `STEP_API_KEY_ROLE_ARN` is set. The post-job hook checks only `STEP_API`. API-discovered agent asset URLs are not preflighted. VM pre-job hooks require either `STEP_API_KEY` or `STEP_API_KEY_ROLE_ARN`; if neither is set, the hook logs the configuration problem and exits successfully after printing detailed diagnostics. Kubernetes pre-job hooks do not require API-key-related env vars during preflight.
+
+### Windows agent service
+
+On Windows the agent runs as a Windows service named `StepSecurityAgent`. The hook
+owns the full lifecycle, so the service does not need to be provisioned in advance:
+
+1. The pre-job hook stops the service if it is running, because a running service
+   holds an exclusive lock on `agent.exe` and may hold `config.json` open.
+2. It installs or updates `agent.exe`, then writes `config.json` for this job.
+3. It creates the service with `sc.exe create` if it does not exist, or points an
+   existing one at the current binary and arguments with `sc.exe config`.
+4. It starts the service and waits for the agent to report ready.
+5. The post-job hook stops the service with `sc.exe stop`, which gives the agent a
+   real shutdown signal so it can finalize its results. The service stays registered
+   so later jobs skip creation.
+
+The service is registered with `start= demand`, not `auto`: the hook starts and stops
+it per job, so the agent does not run between jobs or come up on boot.
+
+Service mode requires the runner process to be elevated, since `sc.exe create`,
+`config`, `start`, and `stop` all need Administrator. If any of those fail, the hook
+logs a warning and falls back to running the agent as a detached child process, so the
+job is still protected. Set `STEP_WINDOWS_AGENT_SERVICE=false` to always use process mode.
+
+To inspect the service on a runner:
+
+```powershell
+sc.exe query StepSecurityAgent
+sc.exe qc StepSecurityAgent
+```
 
 ### Resolving the StepSecurity API key
 
@@ -291,3 +323,4 @@ Operational notes:
 - In the Artifactory-hosted wrapper flow, the pre-job wrapper refreshes staged `pre.js` and `post.js`, then executes the staged copy. The post-job wrapper executes the staged `post.js`.
 - Check wrapper scripts at the paths configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.
 - Check agent files, logs, and hook state under `STEP_AGENT_ROOT` on Linux or `STEP_AGENT_ROOT_WINDOWS` on Windows.
+- On Windows, check the agent service state with `sc.exe query StepSecurityAgent`. If the pre-job hook logged a fallback to process mode, confirm the runner service runs elevated.

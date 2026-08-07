@@ -223,9 +223,21 @@ export async function installWindowsAgent(): Promise<void> {
     throw new Error(`agent.exe not found at ${extractedAgentPath}`);
   }
 
-  fs.copyFileSync(extractedAgentPath, AgentFiles.windows.agentBinary);
-  if (expectedSha256) {
-    writeCurrentSha256(AgentFiles.windows.currentSha256, expectedSha256);
+  // Windows holds a mandatory exclusive lock on the image of a running process,
+  // so this fails while the agent is running as a service or a child process.
+  // Keep the existing binary in that case: a working older agent beats none.
+  // The sha256 marker is only written on a successful copy, otherwise the next
+  // job would see it and skip the update while the old binary is still in place.
+  try {
+    fs.copyFileSync(extractedAgentPath, AgentFiles.windows.agentBinary);
+    if (expectedSha256) {
+      writeCurrentSha256(AgentFiles.windows.currentSha256, expectedSha256);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(
+      `WindowsAgent binary=replace-failed path=${AgentFiles.windows.agentBinary} error=${message}`,
+    );
   }
   fs.rmSync(extractPath, { recursive: true, force: true });
   removeIfExists(archivePath);
@@ -248,7 +260,12 @@ function logUnavailableWindowsReleaseWarning(useArtifactory: boolean): void {
   );
 }
 
-export async function startWindowsAgentProcess(): Promise<void> {
+/**
+ * Kills an agent process left over from a previous job.
+ * Returns false when a live process could not be killed, meaning the caller
+ * must not start another agent alongside it.
+ */
+export function killLeftoverWindowsAgentProcess(): boolean {
   const existingPid = readPidFile(AgentFiles.windows.agentPid);
   if (existingPid && processExists(existingPid)) {
     const message = trySignalProcess(existingPid, "SIGKILL");
@@ -257,12 +274,19 @@ export async function startWindowsAgentProcess(): Promise<void> {
         `WindowsAgent process=signal-failed signal=SIGKILL pid=${existingPid} error=${message}`,
       );
       if (processExists(existingPid)) {
-        return;
+        return false;
       }
     }
   }
   removePidFile(AgentFiles.windows.agentPid);
+  return true;
+}
 
+/**
+ * Removes per-job agent state so this job's readiness and done signals cannot be
+ * satisfied by a previous job's files. Does not touch config.json or agent.exe.
+ */
+export function resetWindowsJobArtifacts(): void {
   for (const filePath of [
     AgentFiles.windows.agentStatus,
     AgentFiles.windows.agentDone,
@@ -272,6 +296,36 @@ export async function startWindowsAgentProcess(): Promise<void> {
   ]) {
     removeIfExists(filePath);
   }
+}
+
+export async function waitForWindowsAgentStatus(): Promise<void> {
+  const { matched } = await waitForCondition(
+    () => fs.existsSync(AgentFiles.windows.agentStatus),
+    30,
+    300,
+  );
+
+  if (!matched) {
+    logWarning("WindowsAgent process=init status=timeout");
+    printFileIfExists(AgentFiles.windows.agentLog, {
+      groupTitle: "[StepSecurity] Windows HardenRunner logs",
+    });
+    return;
+  }
+
+  const status = fs.readFileSync(AgentFiles.windows.agentStatus, "utf8");
+  process.stdout.write(status);
+  if (!status.endsWith("\n")) {
+    process.stdout.write("\n");
+  }
+}
+
+export async function startWindowsAgentProcess(): Promise<void> {
+  if (!killLeftoverWindowsAgentProcess()) {
+    return;
+  }
+
+  resetWindowsJobArtifacts();
 
   if (!fs.existsSync(AgentFiles.windows.agentBinary)) {
     throw new Error(
@@ -298,25 +352,7 @@ export async function startWindowsAgentProcess(): Promise<void> {
   );
   logInfo(`WindowsAgent process=started pid=${agentProcess.pid}`);
 
-  const { matched } = await waitForCondition(
-    () => fs.existsSync(AgentFiles.windows.agentStatus),
-    30,
-    300,
-  );
-
-  if (!matched) {
-    logWarning("WindowsAgent process=init status=timeout");
-    printFileIfExists(AgentFiles.windows.agentLog, {
-      groupTitle: "[StepSecurity] Windows HardenRunner logs",
-    });
-    return;
-  }
-
-  const status = fs.readFileSync(AgentFiles.windows.agentStatus, "utf8");
-  process.stdout.write(status);
-  if (!status.endsWith("\n")) {
-    process.stdout.write("\n");
-  }
+  await waitForWindowsAgentStatus();
 }
 
 export async function stopWindowsAgentProcess(): Promise<void> {

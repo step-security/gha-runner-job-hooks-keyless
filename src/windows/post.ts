@@ -2,7 +2,11 @@ import * as fs from "fs";
 import * as cp from "child_process";
 
 import { logInfo, logWarning } from "../lib/common";
-import { AgentFiles, AgentRuntimeConfig } from "../lib/config";
+import {
+  AgentFiles,
+  AgentRuntimeConfig,
+  WindowsAgentServiceConfig,
+} from "../lib/config";
 import { isAgentRunning } from "../lib/process";
 import {
   appendWindowsSummary,
@@ -14,6 +18,11 @@ import {
   windowsPostEventExists,
   writeWindowsPostEvent,
 } from "./agent";
+import {
+  queryWindowsServiceState,
+  stopWindowsAgentService,
+  windowsServiceExists,
+} from "./service";
 
 export async function runWindowsPostJobHook(): Promise<void> {
   logInfo("Hook phase=post platform=windows runtime=vm");
@@ -35,8 +44,14 @@ export async function runWindowsPostJobHook(): Promise<void> {
     return;
   }
 
-  if (!isAgentRunning(AgentFiles.windows.agentPid)) {
-    logWarning("Hook phase=post platform=windows runtime=vm status=skipped reason=missing-agent-pid");
+  // In service mode there is no PID file, so a PID-only check would skip the
+  // whole post hook. Treat a RUNNING service as the agent being up.
+  const serviceRunning =
+    WindowsAgentServiceConfig.enabled &&
+    queryWindowsServiceState() === "RUNNING";
+
+  if (!serviceRunning && !isAgentRunning(AgentFiles.windows.agentPid)) {
+    logWarning("Hook phase=post platform=windows runtime=vm status=skipped reason=agent-not-running");
     cleanupWindowsJobArtifacts();
     return;
   }
@@ -62,7 +77,16 @@ export async function runWindowsPostJobHook(): Promise<void> {
     await waitForWindowsDoneFile();
   }
 
-  await stopWindowsAgentProcess();
+  // Stop whichever mode actually started the agent: the pre-hook falls back to
+  // process mode when the service cannot be brought up, so both are possible.
+  if (WindowsAgentServiceConfig.enabled && windowsServiceExists()) {
+    await stopWindowsAgentService();
+  }
+
+  if (fs.existsSync(AgentFiles.windows.agentPid)) {
+    await stopWindowsAgentProcess();
+  }
+
   await appendWindowsSummary();
   printWindowsAgentLogs();
   cleanupWindowsJobArtifacts();
