@@ -14,6 +14,16 @@ export const HookModeConfig = {
   linux: process.env.STEP_LINUX_HOOK_MODE || "",
 } as const;
 
+export const WindowsAgentServiceConfig = {
+  // Feature flag: run the Windows agent as a Windows service instead of a
+  // detached child process. On by default; set STEP_WINDOWS_AGENT_SERVICE=false
+  // to fall back to process mode.
+  enabled: process.env.STEP_WINDOWS_AGENT_SERVICE !== "false",
+  name: process.env.STEP_WINDOWS_SERVICE_NAME || "StepSecurityAgent",
+  displayName: "StepSecurity Agent",
+  description: "StepSecurity Harden Runner Agent",
+} as const;
+
 export const ApiKeyConfig = {
   envApiKey: process.env.STEP_API_KEY || "",
   roleArn: process.env.STEP_API_KEY_ROLE_ARN || "",
