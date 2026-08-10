@@ -2,17 +2,11 @@ import * as fs from "fs";
 import * as cp from "child_process";
 
 import { logInfo, logWarning } from "../lib/common";
-import {
-  AgentFiles,
-  AgentRuntimeConfig,
-  WindowsAgentServiceConfig,
-} from "../lib/config";
-import { isAgentRunning } from "../lib/process";
+import { AgentRuntimeConfig } from "../lib/config";
 import {
   appendWindowsSummary,
   cleanupWindowsJobArtifacts,
   printWindowsAgentLogs,
-  stopWindowsAgentProcess,
   waitForWindowsDoneFile,
   windowsAgentInstalled,
   windowsPostEventExists,
@@ -21,7 +15,6 @@ import {
 import {
   queryWindowsServiceState,
   stopWindowsAgentService,
-  windowsServiceExists,
 } from "./service";
 
 export async function runWindowsPostJobHook(): Promise<void> {
@@ -44,13 +37,7 @@ export async function runWindowsPostJobHook(): Promise<void> {
     return;
   }
 
-  // In service mode there is no PID file, so a PID-only check would skip the
-  // whole post hook. Treat a RUNNING service as the agent being up.
-  const serviceRunning =
-    WindowsAgentServiceConfig.enabled &&
-    queryWindowsServiceState() === "RUNNING";
-
-  if (!serviceRunning && !isAgentRunning(AgentFiles.windows.agentPid)) {
+  if (queryWindowsServiceState() !== "RUNNING") {
     logWarning("Hook phase=post platform=windows runtime=vm status=skipped reason=agent-not-running");
     cleanupWindowsJobArtifacts();
     return;
@@ -77,15 +64,9 @@ export async function runWindowsPostJobHook(): Promise<void> {
     await waitForWindowsDoneFile();
   }
 
-  // Stop whichever mode actually started the agent: the pre-hook falls back to
-  // process mode when the service cannot be brought up, so both are possible.
-  if (WindowsAgentServiceConfig.enabled && windowsServiceExists()) {
-    await stopWindowsAgentService();
-  }
-
-  if (fs.existsSync(AgentFiles.windows.agentPid)) {
-    await stopWindowsAgentProcess();
-  }
+  // sc.exe stop gives the agent a real shutdown signal so it can finalize its
+  // results. The service is known to be RUNNING from the check above.
+  await stopWindowsAgentService();
 
   await appendWindowsSummary();
   printWindowsAgentLogs();

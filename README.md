@@ -129,7 +129,6 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                                                              |
 | `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                      |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
-| `STEP_WINDOWS_AGENT_SERVICE` | `true`                                    | Run the Windows agent as a Windows service. Set to `false` to run it as a detached child process instead. Service mode requires the runner to be elevated; if service setup fails, the hook falls back to process mode.                                       |
 | `STEP_WINDOWS_SERVICE_NAME`  | `StepSecurityAgent`                       | Name of the Windows service managed by the hook.                                                                                                                                                                                                             |
 | `STEP_ARTIFACTORY_BASE`      | ``                                        | Optional Artifactory base URL for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
 | `STEP_ARTIFACTORY_REPO`      | ``                                        | Optional Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required when using property-based serving resolution.                                                                                                    |
@@ -163,10 +162,10 @@ owns the full lifecycle, so the service does not need to be provisioned in advan
 The service is registered with `start= demand`, not `auto`: the hook starts and stops
 it per job, so the agent does not run between jobs or come up on boot.
 
-Service mode requires the runner process to be elevated, since `sc.exe create`,
-`config`, `start`, and `stop` all need Administrator. If any of those fail, the hook
-logs a warning and falls back to running the agent as a detached child process, so the
-job is still protected. Set `STEP_WINDOWS_AGENT_SERVICE=false` to always use process mode.
+The service is the only supported way the hook runs the Windows agent, and it requires
+the runner process to be elevated, since `sc.exe create`, `config`, `start`, and `stop`
+all need Administrator. If any of those fail, the hook logs a warning and the job runs
+without an agent; it is not failed.
 
 To inspect the service on a runner:
 
@@ -323,4 +322,4 @@ Operational notes:
 - In the Artifactory-hosted wrapper flow, the pre-job wrapper refreshes staged `pre.js` and `post.js`, then executes the staged copy. The post-job wrapper executes the staged `post.js`.
 - Check wrapper scripts at the paths configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.
 - Check agent files, logs, and hook state under `STEP_AGENT_ROOT` on Linux or `STEP_AGENT_ROOT_WINDOWS` on Windows.
-- On Windows, check the agent service state with `sc.exe query StepSecurityAgent`. If the pre-job hook logged a fallback to process mode, confirm the runner service runs elevated.
+- On Windows, check the agent service state with `sc.exe query StepSecurityAgent`. If the pre-job hook logged `service=unavailable`, confirm the runner service runs elevated.

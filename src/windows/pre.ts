@@ -5,7 +5,6 @@ import { runConfiguredEndpointPreflight } from "../lib/preflight";
 import {
   ensureWindowsAgentRoot,
   installWindowsAgent,
-  startWindowsAgentProcess,
   waitForWindowsAgentStatus,
 } from "./agent";
 import {
@@ -33,21 +32,12 @@ export async function runWindowsPreJobHook(): Promise<void> {
   await runConfiguredEndpointPreflight({ requireVmApiKey: true });
   ensureWindowsAgentRoot();
 
-  if (!WindowsAgentServiceConfig.enabled) {
-    await buildAgentConfig();
-    await installWindowsAgent();
-    await startWindowsAgentProcess();
-    logInfo("Hook phase=pre platform=windows runtime=vm status=completed");
-    return;
-  }
-
   // Stop first: a running service locks agent.exe and may hold config.json open,
   // so neither file can be replaced until the service is confirmed stopped.
   if (!(await stopWindowsAgentServiceIfRunning())) {
-    // The service is still running with the previous job's config. Starting a
-    // second agent here would leave two agents contending for the same
-    // interception state and state files, which is worse than one agent with a
-    // stale correlation id, so stop rather than fall back to process mode.
+    // The service is still running with the previous job's config, and its lock
+    // on agent.exe and config.json means this job cannot be configured. Leave it
+    // alone: an agent with a stale correlation id beats no agent at all.
     logWarning(
       `WindowsAgent service=stop-failed name=${WindowsAgentServiceConfig.name} action=left-running`,
     );
@@ -60,8 +50,11 @@ export async function runWindowsPreJobHook(): Promise<void> {
   if (await ensureAndStartWindowsAgentService()) {
     await waitForWindowsAgentStatus();
   } else {
-    logWarning("WindowsAgent service=unavailable action=fallback-to-process");
-    await startWindowsAgentProcess();
+    // sc.exe create/config/start all need Administrator, so this is usually a
+    // non-elevated runner. The job continues without an agent.
+    logWarning(
+      `WindowsAgent service=unavailable name=${WindowsAgentServiceConfig.name} action=job-unprotected`,
+    );
   }
 
   logInfo("Hook phase=pre platform=windows runtime=vm status=completed");

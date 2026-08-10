@@ -8,10 +8,7 @@ import {
   runCommand,
   waitForCondition,
 } from "../lib/common";
-import {
-  killLeftoverWindowsAgentProcess,
-  resetWindowsJobArtifacts,
-} from "./agent";
+import { resetWindowsJobArtifacts } from "./agent";
 
 type WindowsServiceState =
   | "RUNNING"
@@ -194,8 +191,7 @@ async function startWindowsAgentService(): Promise<boolean> {
       `WindowsAgent service=start-timeout name=${WindowsAgentServiceConfig.name}`,
     );
     // The service may be stuck in START_PENDING with a partially initialized
-    // agent. Stop it so the caller's process-mode fallback cannot end up
-    // running a second agent alongside it.
+    // agent. Stop it rather than leaving a half-started agent behind.
     await stopWindowsAgentService();
     return false;
   }
@@ -270,18 +266,9 @@ export async function stopWindowsAgentServiceIfRunning(): Promise<boolean> {
 
 /**
  * Called after agent.exe and config.json are in place. Returns false when the
- * service path is unavailable and the caller should fall back to process mode.
+ * service could not be registered or started, meaning this job runs unprotected.
  */
 export async function ensureAndStartWindowsAgentService(): Promise<boolean> {
-  // A process-mode agent from a previous flag-off job would otherwise keep
-  // running alongside the service.
-  if (!killLeftoverWindowsAgentProcess()) {
-    logWarning(
-      "WindowsAgent service=blocked reason=leftover-process-running",
-    );
-    return false;
-  }
-
   resetWindowsJobArtifacts();
 
   const ensured = windowsServiceExists()
