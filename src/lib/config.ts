@@ -15,10 +15,6 @@ export const HookModeConfig = {
 } as const;
 
 export const WindowsAgentServiceConfig = {
-  // Feature flag: run the Windows agent as a Windows service instead of a
-  // detached child process. On by default; set STEP_WINDOWS_AGENT_SERVICE=false
-  // to fall back to process mode.
-  enabled: process.env.STEP_WINDOWS_AGENT_SERVICE !== "false",
   name: process.env.STEP_WINDOWS_SERVICE_NAME || "StepSecurityAgent",
   displayName: "StepSecurity Agent",
   description: "StepSecurity Harden Runner Agent",
@@ -51,7 +47,6 @@ export const AgentFiles = {
     agentDone: `${AgentRuntimeConfig.windowsRoot}\\done.json`,
     agentBinary: `${AgentRuntimeConfig.windowsRoot}\\agent.exe`,
     agentLog: `${AgentRuntimeConfig.windowsRoot}\\agent.log`,
-    agentPid: `${AgentRuntimeConfig.windowsRoot}\\agent.pid`,
     postEvent: `${AgentRuntimeConfig.windowsRoot}\\post_event.json`,
     currentSha256: `${AgentRuntimeConfig.windowsRoot}\\.current_sha256`,
   },
