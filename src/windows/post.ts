@@ -2,18 +2,20 @@ import * as fs from "fs";
 import * as cp from "child_process";
 
 import { logInfo, logWarning } from "../lib/common";
-import { AgentFiles, AgentRuntimeConfig } from "../lib/config";
-import { isAgentRunning } from "../lib/process";
+import { AgentRuntimeConfig } from "../lib/config";
 import {
   appendWindowsSummary,
   cleanupWindowsJobArtifacts,
   printWindowsAgentLogs,
-  stopWindowsAgentProcess,
   waitForWindowsDoneFile,
   windowsAgentInstalled,
   windowsPostEventExists,
   writeWindowsPostEvent,
 } from "./agent";
+import {
+  queryWindowsServiceState,
+  stopWindowsAgentService,
+} from "./service";
 
 export async function runWindowsPostJobHook(): Promise<void> {
   logInfo("Hook phase=post platform=windows runtime=vm");
@@ -35,8 +37,8 @@ export async function runWindowsPostJobHook(): Promise<void> {
     return;
   }
 
-  if (!isAgentRunning(AgentFiles.windows.agentPid)) {
-    logWarning("Hook phase=post platform=windows runtime=vm status=skipped reason=missing-agent-pid");
+  if (queryWindowsServiceState() !== "RUNNING") {
+    logWarning("Hook phase=post platform=windows runtime=vm status=skipped reason=agent-not-running");
     cleanupWindowsJobArtifacts();
     return;
   }
@@ -62,7 +64,10 @@ export async function runWindowsPostJobHook(): Promise<void> {
     await waitForWindowsDoneFile();
   }
 
-  await stopWindowsAgentProcess();
+  // sc.exe stop gives the agent a real shutdown signal so it can finalize its
+  // results. The service is known to be RUNNING from the check above.
+  await stopWindowsAgentService();
+
   await appendWindowsSummary();
   printWindowsAgentLogs();
   cleanupWindowsJobArtifacts();
