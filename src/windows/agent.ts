@@ -34,12 +34,6 @@ import {
   runCommand,
   waitForCondition,
 } from "../lib/common";
-import {
-  processExists,
-  readPidFile,
-  removePidFile,
-  trySignalProcess,
-} from "../lib/process";
 
 const WindowsAgentReleaseBaseUrl = `${Urls.stepSecurityApi}/harden-runner-agent/github/win/single/releases`;
 
@@ -223,9 +217,21 @@ export async function installWindowsAgent(): Promise<void> {
     throw new Error(`agent.exe not found at ${extractedAgentPath}`);
   }
 
-  fs.copyFileSync(extractedAgentPath, AgentFiles.windows.agentBinary);
-  if (expectedSha256) {
-    writeCurrentSha256(AgentFiles.windows.currentSha256, expectedSha256);
+  // Windows holds a mandatory exclusive lock on the image of a running process,
+  // so this fails while the agent service is still running.
+  // Keep the existing binary in that case: a working older agent beats none.
+  // The sha256 marker is only written on a successful copy, otherwise the next
+  // job would see it and skip the update while the old binary is still in place.
+  try {
+    fs.copyFileSync(extractedAgentPath, AgentFiles.windows.agentBinary);
+    if (expectedSha256) {
+      writeCurrentSha256(AgentFiles.windows.currentSha256, expectedSha256);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWarning(
+      `WindowsAgent binary=replace-failed path=${AgentFiles.windows.agentBinary} error=${message}`,
+    );
   }
   fs.rmSync(extractPath, { recursive: true, force: true });
   removeIfExists(archivePath);
@@ -248,59 +254,25 @@ function logUnavailableWindowsReleaseWarning(useArtifactory: boolean): void {
   );
 }
 
-export async function startWindowsAgentProcess(): Promise<void> {
-  const existingPid = readPidFile(AgentFiles.windows.agentPid);
-  if (existingPid && processExists(existingPid)) {
-    const message = trySignalProcess(existingPid, "SIGKILL");
-    if (message) {
-      logWarning(
-        `WindowsAgent process=signal-failed signal=SIGKILL pid=${existingPid} error=${message}`,
-      );
-      if (processExists(existingPid)) {
-        return;
-      }
-    }
-  }
-  removePidFile(AgentFiles.windows.agentPid);
-
+/**
+ * Removes per-job agent state so this job's readiness and done signals cannot be
+ * satisfied by a previous job's files. Does not touch config.json or agent.exe.
+ */
+export function resetWindowsJobArtifacts(): void {
   for (const filePath of [
     AgentFiles.windows.agentStatus,
     AgentFiles.windows.agentDone,
     AgentFiles.windows.agentLog,
-    AgentFiles.windows.agentPid,
     AgentFiles.windows.postEvent,
   ]) {
     removeIfExists(filePath);
   }
+}
 
-  if (!fs.existsSync(AgentFiles.windows.agentBinary)) {
-    throw new Error(
-      `Agent binary is missing: ${AgentFiles.windows.agentBinary}`,
-    );
-  }
-
-  const logStream = fs.openSync(AgentFiles.windows.agentLog, "a");
-  const childProcess =
-    require("child_process") as typeof import("child_process");
-  const agentProcess = childProcess.spawn(AgentFiles.windows.agentBinary, [], {
-    cwd: AgentRuntimeConfig.windowsRoot,
-    detached: true,
-    stdio: ["ignore", logStream, logStream],
-    windowsHide: true,
-    shell: false,
-  });
-  agentProcess.unref();
-
-  fs.writeFileSync(
-    AgentFiles.windows.agentPid,
-    `${agentProcess.pid}\n`,
-    "utf8",
-  );
-  logInfo(`WindowsAgent process=started pid=${agentProcess.pid}`);
-
+export async function waitForWindowsAgentStatus(): Promise<void> {
   const { matched } = await waitForCondition(
     () => fs.existsSync(AgentFiles.windows.agentStatus),
-    30,
+    60,
     300,
   );
 
@@ -317,69 +289,6 @@ export async function startWindowsAgentProcess(): Promise<void> {
   if (!status.endsWith("\n")) {
     process.stdout.write("\n");
   }
-}
-
-export async function stopWindowsAgentProcess(): Promise<void> {
-  const pid = readPidFile(AgentFiles.windows.agentPid);
-  if (!pid) {
-    logWarning("WindowsAgent process=stop status=pid-not-found");
-    return;
-  }
-
-  if (!processExists(pid)) {
-    logInfo(`WindowsAgent process=stop status=not-running pid=${pid}`);
-    removePidFile(AgentFiles.windows.agentPid);
-    return;
-  }
-
-  logInfo(`WindowsAgent process=stop signal=SIGINT pid=${pid}`);
-  {
-    const message = trySignalProcess(pid, "SIGINT");
-    if (message) {
-      logWarning(
-        `WindowsAgent process=signal-failed signal=SIGINT pid=${pid} error=${message}`,
-      );
-      if (!processExists(pid)) {
-        removePidFile(AgentFiles.windows.agentPid);
-      }
-      return;
-    }
-  }
-
-  const { matched } = await waitForCondition(
-    () => !processExists(pid),
-    10,
-    1000,
-  );
-  if (matched) {
-    logInfo(`WindowsAgent process=stopped mode=graceful pid=${pid}`);
-    removePidFile(AgentFiles.windows.agentPid);
-    return;
-  }
-
-  logWarning("WindowsAgent process=stop status=timeout next_signal=SIGKILL");
-
-  if (processExists(pid)) {
-    const message = trySignalProcess(pid, "SIGKILL");
-    if (message) {
-      logWarning(
-        `WindowsAgent process=signal-failed signal=SIGKILL pid=${pid} error=${message}`,
-      );
-    }
-  }
-
-  const { matched: killed } = await waitForCondition(
-    () => !processExists(pid),
-    3,
-    1000,
-  );
-  if (killed || !processExists(pid)) {
-    logInfo(`WindowsAgent process=stopped mode=forced pid=${pid}`);
-    removePidFile(AgentFiles.windows.agentPid);
-    return;
-  }
-
-  logWarning(`WindowsAgent process=stop status=still-running pid=${pid}`);
 }
 
 export async function waitForWindowsDoneFile(): Promise<void> {
@@ -419,7 +328,6 @@ export function printWindowsAgentLogs(): void {
 export function cleanupWindowsJobArtifacts(): void {
   for (const filePath of [
     AgentFiles.windows.agentJson,
-    AgentFiles.windows.agentPid,
     AgentFiles.windows.agentStatus,
     AgentFiles.windows.agentDone,
     AgentFiles.windows.agentLog,

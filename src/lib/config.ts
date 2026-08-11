@@ -14,6 +14,12 @@ export const HookModeConfig = {
   linux: process.env.STEP_LINUX_HOOK_MODE || "",
 } as const;
 
+export const WindowsAgentServiceConfig = {
+  name: process.env.STEP_WINDOWS_SERVICE_NAME || "StepSecurityAgent",
+  displayName: "StepSecurity Agent",
+  description: "StepSecurity Harden Runner Agent",
+} as const;
+
 export const ApiKeyConfig = {
   envApiKey: process.env.STEP_API_KEY || "",
   roleArn: process.env.STEP_API_KEY_ROLE_ARN || "",
@@ -41,7 +47,6 @@ export const AgentFiles = {
     agentDone: `${AgentRuntimeConfig.windowsRoot}\\done.json`,
     agentBinary: `${AgentRuntimeConfig.windowsRoot}\\agent.exe`,
     agentLog: `${AgentRuntimeConfig.windowsRoot}\\agent.log`,
-    agentPid: `${AgentRuntimeConfig.windowsRoot}\\agent.pid`,
     postEvent: `${AgentRuntimeConfig.windowsRoot}\\post_event.json`,
     currentSha256: `${AgentRuntimeConfig.windowsRoot}\\.current_sha256`,
   },
