@@ -29,6 +29,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Do not ship a release with known high or critical advisories.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Build release artifacts
         run: |
           printf 'export const HookVersion = "%s";\n' "${GITHUB_REF_NAME}" > src/version.ts
