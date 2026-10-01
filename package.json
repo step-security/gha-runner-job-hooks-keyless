@@ -8,8 +8,8 @@
     "post": "mkdir -p dist && ncc build src/post.ts --no-source-map-register -m -o dist/post && mv dist/post/index.js dist/post.js && rmdir dist/post"
   },
   "devDependencies": {
-    "@aws-sdk/client-secrets-manager": "3.883.0",
-    "@aws-sdk/client-sts": "3.883.0",
+    "@aws-sdk/client-secrets-manager": "3.1141.0",
+    "@aws-sdk/client-sts": "3.1141.0",
     "@types/node": "26.1.0",
     "@vercel/ncc": "0.38.4",
     "typescript": "6.0.3"
