@@ -1,4 +1,8 @@
-import { buildSharedAgentJsonForCurrentJob } from "../lib/agent-config";
+import {
+  buildSharedAgentJsonForCurrentJob,
+  fetchJobPolicyForCurrentJob,
+  JobPolicy,
+} from "../lib/agent-config";
 import { logInfo, logWarning } from "../lib/common";
 import { AgentFiles, WindowsAgentServiceConfig } from "../lib/config";
 import { runConfiguredEndpointPreflight } from "../lib/preflight";
@@ -12,24 +16,32 @@ import {
   stopWindowsAgentServiceIfRunning,
 } from "./service";
 
-async function buildAgentConfig(): Promise<void> {
-  await buildSharedAgentJsonForCurrentJob({
-    agentJsonPath: AgentFiles.windows.agentJson,
-    isPersistent: false,
-    isGithubHosted: true,
-    isDebug: false,
-    egressPolicyAlwaysAudit: false,
-    logJobDetails: true,
-  });
+async function buildAgentConfig(jobPolicy: JobPolicy): Promise<void> {
+  await buildSharedAgentJsonForCurrentJob(
+    {
+      agentJsonPath: AgentFiles.windows.agentJson,
+      isPersistent: false,
+      isGithubHosted: true,
+      isDebug: false,
+      egressPolicyAlwaysAudit: false,
+      logJobDetails: true,
+    },
+    jobPolicy,
+  );
 }
 
 export async function runWindowsPreJobHook(): Promise<void> {
   logInfo("Hook phase=pre platform=windows runtime=vm");
+  await runConfiguredEndpointPreflight({ requireVmApiKey: true });
+
+  // Fetch the policy before any early return below, so a blocked run is
+  // always cancelled even when this job ends up without an agent.
+  const jobPolicy = await fetchJobPolicyForCurrentJob();
+
   if (process.arch === "arm64") {
     logInfo("Hook phase=pre platform=windows runtime=vm status=skipped reason=unsupported-arch arch=arm64");
     return;
   }
-  await runConfiguredEndpointPreflight({ requireVmApiKey: true });
   ensureWindowsAgentRoot();
 
   // Stop first: a running service locks agent.exe and may hold config.json open,
@@ -45,7 +57,7 @@ export async function runWindowsPreJobHook(): Promise<void> {
   }
 
   await installWindowsAgent();
-  await buildAgentConfig();
+  await buildAgentConfig(jobPolicy);
 
   if (await ensureAndStartWindowsAgentService()) {
     await waitForWindowsAgentStatus();
