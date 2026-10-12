@@ -10,6 +10,7 @@ import {
 } from "./github-context";
 import {
   fetchPolicyStoreConfig,
+  handleBlockedRunPolicyEvaluation,
   PolicyStoreConfig,
   PolicyStoreFetchResult,
 } from "./policy";
@@ -41,6 +42,12 @@ export type SharedAgentConfig = {
   one_time_key: string;
   is_debug: boolean;
   is_ghes?: boolean;
+};
+
+export type JobPolicy = {
+  apiKey: string;
+  correlationId: string;
+  config: PolicyStoreConfig | null;
 };
 
 type BuildAgentConfigOptions = {
@@ -141,6 +148,7 @@ async function loadPolicyConfig(
     correlationId,
     apiKey,
   });
+  handleBlockedRunPolicyEvaluation(result.runPolicyEvaluation);
 
   if (result.status !== "found") {
     return { hasPolicy: false, config: null, fetchStatus: result.status };
@@ -149,9 +157,9 @@ async function loadPolicyConfig(
   return { hasPolicy: true, config: result.config, fetchStatus: result.status };
 }
 
-export async function buildSharedAgentJsonForCurrentJob(
-  options: BuildAgentConfigOptions,
-): Promise<string> {
+// Cancels the job (via handleBlockedRunPolicyEvaluation) when the workflow run
+// policy concludes block, so call it before any step that can return early.
+export async function fetchJobPolicyForCurrentJob(): Promise<JobPolicy> {
   const githubEnv = getGitHubEnv();
   const scopedOwner = getScopedOwner(
     githubEnv,
@@ -170,23 +178,16 @@ export async function buildSharedAgentJsonForCurrentJob(
   }
 
   const correlationId = randomUUID();
-  // marker log
-  logInfo(
-    `Generated job correlationId for self-hosted agent: ${correlationId}`,
-  );
-
-  const agentConfig = createBaseAgentConfig(
-    correlationId,
-    apiKey,
-    githubEnv,
-    scopedOwner,
-    options,
-  );
   logInfo("Policy action=fetch source=policy-store");
   const { hasPolicy, config, fetchStatus } = await loadPolicyConfig(
     correlationId,
     apiKey,
     scopedOwner,
+  );
+
+  // marker log
+  logInfo(
+    `Generated job correlationId for self-hosted agent: ${correlationId}`,
   );
 
   if (hasPolicy) {
@@ -196,6 +197,29 @@ export async function buildSharedAgentJsonForCurrentJob(
   } else {
     logWarning("Policy status=fetch-failed fallback=audit");
   }
+
+  return { apiKey, correlationId, config };
+}
+
+export async function buildSharedAgentJsonForCurrentJob(
+  options: BuildAgentConfigOptions,
+  jobPolicy: JobPolicy,
+): Promise<string> {
+  const { apiKey, correlationId, config } = jobPolicy;
+  const githubEnv = getGitHubEnv();
+  const scopedOwner = getScopedOwner(
+    githubEnv,
+    RuntimeConfig.owner,
+    GhesConfig.customer,
+    GhesConfig.serverName,
+  );
+  const agentConfig = createBaseAgentConfig(
+    correlationId,
+    apiKey,
+    githubEnv,
+    scopedOwner,
+    options,
+  );
 
   if (config) {
     agentConfig.allowed_endpoints = config.allowedEndpoints;

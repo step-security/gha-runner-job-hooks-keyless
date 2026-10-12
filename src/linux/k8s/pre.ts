@@ -9,6 +9,7 @@ import { getGithubRunContext } from "../../lib/github-context";
 import {
   fetchWorkflowPolicyCheck,
   fetchWorkflowPolicyStatus,
+  handleBlockedRunPolicyEvaluation,
 } from "../../lib/policy";
 
 const RuntimeConfig = {
@@ -19,13 +20,16 @@ const RuntimeConfig = {
 export async function runK8sPreJobHook(): Promise<void> {
   logInfo("PRE-JOB HOOK: Checking for policy from Policy Store...");
 
-  const { hasPolicy, shouldSleep } = await fetchWorkflowPolicyCheck({
-    owner: RuntimeConfig.owner,
-    repo: RuntimeConfig.repo,
-    workflow: RuntimeConfig.workflow,
-    runId: RuntimeConfig.runId,
-    correlationId: RuntimeConfig.correlationId,
-  });
+  const { hasPolicy, shouldSleep, runPolicyEvaluation } =
+    await fetchWorkflowPolicyCheck({
+      owner: RuntimeConfig.owner,
+      repo: RuntimeConfig.repo,
+      workflow: RuntimeConfig.workflow,
+      runId: RuntimeConfig.runId,
+      correlationId: RuntimeConfig.correlationId,
+    });
+  handleBlockedRunPolicyEvaluation(runPolicyEvaluation);
+
   const echoCommand = requireEchoCommand();
 
   logInfo(`echo command: ${echoCommand}`);
