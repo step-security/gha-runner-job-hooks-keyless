@@ -2,13 +2,18 @@ import { randomUUID } from "crypto";
 
 import { resolveApiKey } from "./api-key";
 import { writeJsonFile } from "./files";
-import { getGithubRunContext } from "./github-context";
+import {
+  getGithubRunContext,
+  getGitHubEnv,
+  getScopedOwner,
+  GitHubEnv,
+} from "./github-context";
 import {
   fetchPolicyStoreConfig,
   PolicyStoreConfig,
   PolicyStoreFetchResult,
 } from "./policy";
-import { Urls } from "./config";
+import { GitHubIdentityConfig, Urls } from "./config";
 import { logInfo, logWarning } from "./common";
 
 export type SharedAgentConfig = {
@@ -53,14 +58,22 @@ const RuntimeConfig = {
 function createBaseAgentConfig(
   correlationId: string,
   apiKey: string,
+  githubEnv: GitHubEnv,
+  scopedOwner: string,
   options: BuildAgentConfigOptions,
 ): SharedAgentConfig {
   const runnerWorkDirectory =
     options.workingDirectory ?? process.env.GITHUB_WORKSPACE ?? "";
 
   return {
-    customer: RuntimeConfig.owner,
-    repo: RuntimeConfig.githubRepository,
+    customer:
+      githubEnv === "ghec"
+        ? RuntimeConfig.owner
+        : GitHubIdentityConfig.customer.trim(),
+    repo:
+      githubEnv === "ghec"
+        ? RuntimeConfig.githubRepository
+        : `${scopedOwner}/${RuntimeConfig.repo}`,
     workflow: RuntimeConfig.workflow,
     run_id: RuntimeConfig.runId,
     correlation_id: correlationId,
@@ -87,6 +100,7 @@ function createBaseAgentConfig(
 async function loadPolicyConfig(
   correlationId: string,
   apiKey: string,
+  owner: string,
 ): Promise<{
   hasPolicy: boolean;
   config: PolicyStoreConfig | null;
@@ -98,7 +112,7 @@ async function loadPolicyConfig(
   }
 
   const result = await fetchPolicyStoreConfig({
-    owner: RuntimeConfig.owner,
+    owner,
     repo: RuntimeConfig.repo,
     workflow: RuntimeConfig.workflow,
     runId: RuntimeConfig.runId,
@@ -116,6 +130,15 @@ async function loadPolicyConfig(
 export async function buildSharedAgentJsonForCurrentJob(
   options: BuildAgentConfigOptions,
 ): Promise<string> {
+  const githubEnv = getGitHubEnv();
+  const scopedOwner = getScopedOwner(
+    githubEnv,
+    RuntimeConfig.owner,
+    GitHubIdentityConfig.customer,
+    GitHubIdentityConfig.serverName,
+  );
+
+  // API-key secret names and STS tags continue to use the raw GitHub owner.
   const apiKey = await resolveApiKey({ owner: RuntimeConfig.owner });
   if (apiKey) {
     logInfo("ApiKey status=resolved");
@@ -130,11 +153,18 @@ export async function buildSharedAgentJsonForCurrentJob(
     `Generated job correlationId for self-hosted agent: ${correlationId}`,
   );
 
-  const agentConfig = createBaseAgentConfig(correlationId, apiKey, options);
+  const agentConfig = createBaseAgentConfig(
+    correlationId,
+    apiKey,
+    githubEnv,
+    scopedOwner,
+    options,
+  );
   logInfo("Policy action=fetch source=policy-store");
   const { hasPolicy, config, fetchStatus } = await loadPolicyConfig(
     correlationId,
     apiKey,
+    scopedOwner,
   );
 
   if (hasPolicy) {

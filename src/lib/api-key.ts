@@ -4,8 +4,15 @@ import {
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
 
-import { logInfo, logWarning } from "./common";
-import { ApiKeyConfig } from "./config";
+import { getWithRetry, logInfo, logWarning } from "./common";
+import { ApiKeyConfig, ArtifactoryConfig } from "./config";
+import {
+  ArtifactoryConfigValues,
+  isArtifactoryConfigured,
+  searchArtifactsByProperties,
+} from "./artifactory";
+import { getGitHubEnv, GitHubEnv } from "./github-context";
+import { runAwsEndpointPreflight } from "./preflight";
 
 export interface FetchApiKeyOptions {
   roleArn: string;
@@ -14,6 +21,21 @@ export interface FetchApiKeyOptions {
   region?: string;
   keyField?: string;
 }
+
+export type HookConfig = {
+  roleArn: string;
+  region: string;
+};
+
+type SearchHookConfig = (
+  config: ArtifactoryConfigValues,
+  selectors: Record<string, string>,
+) => Promise<Array<{ downloadUri?: string }>>;
+
+type GetHookConfig = (
+  url: string | URL,
+  headers?: Record<string, string>,
+) => Promise<{ statusCode: number; body: string }>;
 
 export async function resolveApiKey(
   options: { owner?: string } = {},
@@ -24,14 +46,6 @@ export async function resolveApiKey(
     return envApiKey;
   }
 
-  const roleArn = ApiKeyConfig.roleArn;
-  if (!roleArn) {
-    logWarning(
-      "ApiKey status=skipped source=secrets-manager reason=missing-role-arn",
-    );
-    return "";
-  }
-
   if (!options.owner) {
     logWarning(
       "ApiKey status=skipped source=secrets-manager reason=missing-owner",
@@ -39,14 +53,20 @@ export async function resolveApiKey(
     return "";
   }
 
-  const secretName = ApiKeyConfig.secretName.replace(/<owner>/g, options.owner);
+  const githubEnv = getGitHubEnv();
+  const config = await resolveHookConfigArtifact();
+  const secretName = getApiKeyName(
+    githubEnv,
+    options.owner,
+    ApiKeyConfig.secretName,
+  );
+  await runAwsEndpointPreflight(config.region);
 
   logInfo(`ApiKey source=secrets-manager secret_name=${secretName}`);
   return fetchApiKeyFromSecret({
-    roleArn,
+    ...config,
     secretName,
     orgName: options.owner,
-    region: ApiKeyConfig.secretRegion,
     keyField: ApiKeyConfig.secretField,
   });
 }
@@ -98,4 +118,91 @@ export async function fetchApiKeyFromSecret(
   }
 
   return value;
+}
+
+export function getApiKeyName(
+  githubEnv: GitHubEnv,
+  owner: string,
+  template: string,
+): string {
+  return template
+    .replace(/<github_env>/g, () => githubEnv)
+    .replace(/<owner>/g, () => owner);
+}
+
+export async function resolveHookConfigArtifact(
+  artifactoryConfig: ArtifactoryConfigValues = ArtifactoryConfig,
+  search: SearchHookConfig = searchArtifactsByProperties,
+  fetchConfig: (
+    downloadUri: string,
+  ) => Promise<HookConfig> = downloadHookConfig,
+): Promise<HookConfig> {
+  if (!isArtifactoryConfigured(artifactoryConfig)) {
+    throw new Error(
+      "ApiKey status=config-invalid reason=missing-artifactory-config",
+    );
+  }
+
+  const results = await search(artifactoryConfig, {
+    "ss.serving": "true",
+    "ss.gha-hook-config": "true",
+  });
+  if (results.length !== 1) {
+    throw new Error(
+      `ApiKey status=config-invalid reason=unexpected-result-count count=${results.length}`,
+    );
+  }
+
+  const downloadUri = results[0].downloadUri?.trim();
+  if (!downloadUri) {
+    throw new Error(
+      "ApiKey status=config-invalid reason=missing-download-uri",
+    );
+  }
+
+  const config = await fetchConfig(downloadUri);
+  logInfo(`HookConfig status=resolved region=${config.region}`);
+  return config;
+}
+
+export async function downloadHookConfig(
+  downloadUri: string,
+  get: GetHookConfig = getWithRetry,
+): Promise<HookConfig> {
+  const { statusCode, body } = await get(new URL(downloadUri), {
+    "User-Agent": "stepsecurity-jobhooks",
+  });
+  if (statusCode !== 200) {
+    throw new Error(
+      `ApiKey status=config-invalid reason=config-download-failed http_status=${statusCode}`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error("ApiKey status=config-invalid reason=invalid-config-json");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("ApiKey status=config-invalid reason=invalid-config-json");
+  }
+
+  const values = parsed as Record<string, unknown>;
+  return {
+    region: readConfigField(values, "region"),
+    roleArn: readConfigField(values, "roleArn"),
+  };
+}
+
+function readConfigField(
+  config: Record<string, unknown>,
+  name: string,
+): string {
+  const value = config[name];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`ApiKey status=config-invalid field=${name}`);
+  }
+  return value.trim();
 }

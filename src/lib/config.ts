@@ -14,6 +14,11 @@ export const HookModeConfig = {
   linux: process.env.STEP_LINUX_HOOK_MODE || "",
 } as const;
 
+export const GitHubIdentityConfig = {
+  customer: process.env.STEP_CUSTOMER || "",
+  serverName: process.env.STEP_SERVER_NAME || "",
+} as const;
+
 export const WindowsAgentServiceConfig = {
   name: process.env.STEP_WINDOWS_SERVICE_NAME || "StepSecurityAgent",
   displayName: "StepSecurity Agent",
@@ -22,11 +27,9 @@ export const WindowsAgentServiceConfig = {
 
 export const ApiKeyConfig = {
   envApiKey: process.env.STEP_API_KEY || "",
-  roleArn: process.env.STEP_API_KEY_ROLE_ARN || "",
   secretName:
     process.env.STEP_API_KEY_SECRET_NAME ||
-    "stepsecurity/orgs/<owner>/vm-api-key",
-  secretRegion: process.env.STEP_API_KEY_SECRET_REGION || "us-west-2",
+    "stepsecurity/orgs/<github_env>/<owner>/vm-api-key",
   secretField: process.env.STEP_API_KEY_SECRET_FIELD || "api_key",
 } as const;
 
