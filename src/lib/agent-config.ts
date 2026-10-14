@@ -30,6 +30,7 @@ export type SharedAgentConfig = {
   is_persistent: boolean;
   has_prejob_policy: boolean;
   allowed_endpoints: string;
+  denied_endpoints: string;
   egress_policy: string;
   disable_telemetry: boolean;
   disable_sudo: boolean;
@@ -105,6 +106,7 @@ function createBaseAgentConfig(
     is_persistent: options.isPersistent,
     has_prejob_policy: false,
     allowed_endpoints: "",
+    denied_endpoints: "",
     egress_policy: "audit",
     disable_telemetry: false,
     disable_sudo: false,
@@ -197,6 +199,7 @@ export async function buildSharedAgentJsonForCurrentJob(
 
   if (config) {
     agentConfig.allowed_endpoints = config.allowedEndpoints;
+    agentConfig.denied_endpoints = config.deniedEndpoints;
     agentConfig.egress_policy = config.egressPolicy;
     agentConfig.disable_telemetry = config.disableTelemetry;
     agentConfig.disable_sudo = config.disableSudo;
