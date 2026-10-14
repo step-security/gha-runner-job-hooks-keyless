@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { handleFatalError, logWarning } from "./lib/common";
+import { handleFatalError, logInfo, logWarning } from "./lib/common";
+import { getGitHubEnv } from "./lib/github-context";
 import { runLinuxPreJobHook } from "./linux/pre";
 import { runWindowsPreJobHook } from "./windows/pre";
 import { HookVersion } from "./version";
@@ -8,6 +9,7 @@ import { HookVersion } from "./version";
 async function main(): Promise<void> {
   console.log("[StepSecurity] pre job-hook"); // marker log
   console.log(`[StepSecurity] JobHook version=${HookVersion}`);
+  logInfo(`GitHubEnvironment value=${getGitHubEnv()}`);
 
   if (process.platform === "linux") {
     await runLinuxPreJobHook();
