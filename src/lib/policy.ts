@@ -20,6 +20,7 @@ export type WorkflowPolicyCheckParams = {
 export type PolicyStoreConfig = {
   policyName: string;
   allowedEndpoints: string;
+  deniedEndpoints: string;
   disableSudo: boolean;
   disableSudoAndContainers: boolean;
   disableFileMonitoring: boolean;
@@ -35,6 +36,7 @@ export type PolicyStoreFetchResult =
 type PolicyStoreResponse = {
   policy_name?: unknown;
   allowed_endpoints?: unknown;
+  denied_endpoints?: unknown;
   disable_sudo?: unknown;
   disable_sudo_and_containers?: unknown;
   disable_file_monitoring?: unknown;
@@ -177,7 +179,7 @@ export async function fetchWorkflowPolicyStatus(params: {
   }
 }
 
-function parsePolicyStoreConfig(body: string): PolicyStoreConfig | null {
+export function parsePolicyStoreConfig(body: string): PolicyStoreConfig | null {
   const response = JSON.parse(body) as PolicyStoreResponse;
   const policyName =
     typeof response.policy_name === "string" ? response.policy_name.trim() : "";
@@ -186,15 +188,10 @@ function parsePolicyStoreConfig(body: string): PolicyStoreConfig | null {
     return null;
   }
 
-  const allowedEndpoints = Array.isArray(response.allowed_endpoints)
-    ? response.allowed_endpoints
-        .filter((value): value is string => typeof value === "string")
-        .join(" ")
-    : "";
-
   return {
     policyName,
-    allowedEndpoints,
+    allowedEndpoints: endpointArrayToString(response.allowed_endpoints),
+    deniedEndpoints: endpointArrayToString(response.denied_endpoints),
     disableSudo: response.disable_sudo === true,
     disableSudoAndContainers: response.disable_sudo_and_containers === true,
     disableFileMonitoring: response.disable_file_monitoring === true,
@@ -205,4 +202,10 @@ function parsePolicyStoreConfig(body: string): PolicyStoreConfig | null {
         ? response.egress_policy
         : "audit",
   };
+}
+
+function endpointArrayToString(value: unknown): string {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string").join(" ")
+    : "";
 }
