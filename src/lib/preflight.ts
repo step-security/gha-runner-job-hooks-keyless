@@ -5,7 +5,7 @@ import { logInfo, logWarning } from "./common";
 import {
   ApiKeyConfig,
   ArtifactoryConfig,
-  GitHubIdentityConfig,
+  GhesConfig,
   Urls,
 } from "./config";
 import { isArtifactoryConfigured } from "./artifactory";
@@ -99,12 +99,12 @@ function collectConfigFailures(
   }
 
   if (options.requireVmApiKey && getGitHubEnv() !== "ghec") {
-    if (!GitHubIdentityConfig.customer.trim()) {
+    if (!GhesConfig.customer.trim()) {
       failures.push(
         "Preflight status=config-invalid reason=missing-step-customer",
       );
     }
-    if (!GitHubIdentityConfig.serverName.trim()) {
+    if (!GhesConfig.serverName.trim()) {
       failures.push(
         "Preflight status=config-invalid reason=missing-step-server-name",
       );

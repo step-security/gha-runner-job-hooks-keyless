@@ -13,7 +13,7 @@ import {
   PolicyStoreConfig,
   PolicyStoreFetchResult,
 } from "./policy";
-import { GitHubIdentityConfig, Urls } from "./config";
+import { GhesConfig, Urls } from "./config";
 import { logInfo, logWarning } from "./common";
 
 export type SharedAgentConfig = {
@@ -39,6 +39,7 @@ export type SharedAgentConfig = {
   is_github_hosted: boolean;
   one_time_key: string;
   is_debug: boolean;
+  is_ghes?: boolean;
 };
 
 type BuildAgentConfigOptions = {
@@ -55,6 +56,25 @@ const RuntimeConfig = {
   ...getGithubRunContext(),
 };
 
+export function getAgentIdentity(
+  githubEnv: GitHubEnv,
+  githubRepository: string,
+  owner: string,
+  repo: string,
+  customer: string,
+  scopedOwner: string,
+): Pick<SharedAgentConfig, "customer" | "repo" | "is_ghes"> {
+  if (githubEnv === "ghec") {
+    return { customer: owner, repo: githubRepository };
+  }
+
+  return {
+    customer: customer.trim(),
+    repo: `${scopedOwner}/${repo}`,
+    is_ghes: true,
+  };
+}
+
 function createBaseAgentConfig(
   correlationId: string,
   apiKey: string,
@@ -66,14 +86,14 @@ function createBaseAgentConfig(
     options.workingDirectory ?? process.env.GITHUB_WORKSPACE ?? "";
 
   return {
-    customer:
-      githubEnv === "ghec"
-        ? RuntimeConfig.owner
-        : GitHubIdentityConfig.customer.trim(),
-    repo:
-      githubEnv === "ghec"
-        ? RuntimeConfig.githubRepository
-        : `${scopedOwner}/${RuntimeConfig.repo}`,
+    ...getAgentIdentity(
+      githubEnv,
+      RuntimeConfig.githubRepository,
+      RuntimeConfig.owner,
+      RuntimeConfig.repo,
+      GhesConfig.customer,
+      scopedOwner,
+    ),
     workflow: RuntimeConfig.workflow,
     run_id: RuntimeConfig.runId,
     correlation_id: correlationId,
@@ -134,8 +154,8 @@ export async function buildSharedAgentJsonForCurrentJob(
   const scopedOwner = getScopedOwner(
     githubEnv,
     RuntimeConfig.owner,
-    GitHubIdentityConfig.customer,
-    GitHubIdentityConfig.serverName,
+    GhesConfig.customer,
+    GhesConfig.serverName,
   );
 
   // API-key secret names and STS tags continue to use the raw GitHub owner.

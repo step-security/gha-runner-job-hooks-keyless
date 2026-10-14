@@ -204,7 +204,7 @@ The hook detects the GitHub environment from `GITHUB_SERVER_URL`, defaulting to 
 | `*.ghe.com` | `ghdr` |
 | Any other hostname | `ghes` |
 
-For GHDR and GHES VM runners, set `STEP_CUSTOMER` and `STEP_SERVER_NAME`. Policy Store requests and the repository identity sent to the agent use `<customer>::<server_name>::<owner>`. API-key secret-name replacement and the `OrgName` STS session tag continue to use the raw GitHub owner.
+For GHDR and GHES VM runners, set `STEP_CUSTOMER` and `STEP_SERVER_NAME`. Policy Store requests and the repository identity sent to the agent use `<customer>::<server_name>::<owner>`, and the generated agent JSON includes `"is_ghes": true`. API-key secret-name replacement and the `OrgName` STS session tag continue to use the raw GitHub owner.
 
 It reads the configuration once per pre-job invocation, logs the resolved region, and resolves the secret name from `STEP_API_KEY_SECRET_NAME`, which defaults to `stepsecurity/orgs/<github_env>/<owner>/vm-api-key`, preserving the GitHub owner's casing. A missing download URL, an invalid configuration file, or multiple matching configuration items produce a configuration error. There is no fallback to the former runner role or region environment variables.
 

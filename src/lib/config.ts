@@ -14,7 +14,7 @@ export const HookModeConfig = {
   linux: process.env.STEP_LINUX_HOOK_MODE || "",
 } as const;
 
-export const GitHubIdentityConfig = {
+export const GhesConfig = {
   customer: process.env.STEP_CUSTOMER || "",
   serverName: process.env.STEP_SERVER_NAME || "",
 } as const;
