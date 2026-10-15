@@ -2,8 +2,6 @@
 set -euo pipefail
 
 export STEP_AGENT_ROOT="/home/ec2-user/stepsecurity"
-export STEP_API_KEY_ROLE_ARN="arn:aws:iam::300960356742:role/jatin-secret-reader-role"
-export STEP_API_KEY_SECRET_REGION="us-west-2"
 export STEP_API="https://int.api.stepsecurity.io/v1"
 export STEP_TELEMETRY_URL="https://int.app-api.stepsecurity.io/v1"
 

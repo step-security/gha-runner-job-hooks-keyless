@@ -81,7 +81,7 @@ Restart the GitHub Actions runner service after updating `/etc/environment`.
 
 ### Authentication option: Load the StepSecurity API key from AWS Secrets Manager
 
-Use this pattern when the runner should not store `STEP_API_KEY` directly in the wrapper scripts. The hook reads the API key from AWS Secrets Manager at runtime after assuming the role configured in `STEP_API_KEY_ROLE_ARN`.
+Use this pattern when the runner should not store `STEP_API_KEY` directly in the wrapper scripts. The hook reads the API key from AWS Secrets Manager at runtime after resolving the role ARN and region from a configuration artifact in Artifactory. The detected GitHub environment is used to resolve the secret-name template.
 
 ```sh
 sudo mkdir -p /opt/step-security
@@ -90,9 +90,8 @@ cat <<EOF | sudo tee /opt/step-security/step-prejob-hook.sh >/dev/null
 #!/bin/bash
 export STEP_AGENT_ROOT="/home/agent"
 export STEP_AGENT_VERSION_LINUX="latest"
-export STEP_API_KEY_ROLE_ARN="arn:aws:iam::123456789012:role/stepsecurity-api-key-reader"
-export STEP_API_KEY_SECRET_NAME="stepsecurity/orgs/<owner>/vm-api-key"
-export STEP_API_KEY_SECRET_REGION="us-west-2"
+export STEP_ARTIFACTORY_BASE="https://artifactory.example.com/artifactory"
+export STEP_ARTIFACTORY_REPO="stepsecurity"
 export STEP_API_KEY_SECRET_FIELD="api_key"
 curl -fsSL "https://artifactory.example.com/stepsecurity/jobhooks/pre.js" | node
 EOF
@@ -100,7 +99,7 @@ EOF
 sudo chmod +x /opt/step-security/step-prejob-hook.sh
 ```
 
-Do not set `STEP_API_KEY` in the wrapper scripts when using this model. The runner must be able to assume the configured IAM role, and the secret must contain the API key in JSON format. The AWS Secrets Manager settings are only required in the pre-job wrapper.
+Do not set `STEP_API_KEY` in the wrapper scripts when using this model. The runner must be able to assume the configured IAM role, and the secret must contain the API key in JSON format. Configure the Artifactory item described under [Resolving the StepSecurity API key](#resolving-the-stepsecurity-api-key) before using this wrapper.
 
 ## Configuration
 
@@ -130,19 +129,19 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                      |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
 | `STEP_WINDOWS_SERVICE_NAME`  | `StepSecurityAgent`                       | Name of the Windows service managed by the hook.                                                                                                                                                                                                             |
-| `STEP_ARTIFACTORY_BASE`      | ``                                        | Optional Artifactory base URL for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
-| `STEP_ARTIFACTORY_REPO`      | ``                                        | Optional Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required when using property-based serving resolution.                                                                                                    |
+| `STEP_CUSTOMER`              | ``                                        | StepSecurity customer name. Required for GHDR and GHES VM runners when scoping the owner for policy and agent repository identity.                                                                                                                            |
+| `STEP_SERVER_NAME`           | ``                                        | StepSecurity server name. Required for GHDR and GHES VM runners when scoping the owner for policy and agent repository identity.                                                                                                                              |
+| `STEP_ARTIFACTORY_BASE`      | ``                                        | Artifactory base URL, required for VM keyless configuration and optional for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
+| `STEP_ARTIFACTORY_REPO`      | ``                                        | Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required for VM keyless configuration or property-based serving resolution.                                                                                                    |
 | `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                                                             |
-| `STEP_API_KEY_ROLE_ARN`      | ``                                        | IAM role to assume before reading the API key from AWS Secrets Manager.                                                                                                                                                                                      |
-| `STEP_API_KEY_SECRET_NAME`   | `stepsecurity/orgs/<owner>/vm-api-key`    | Secrets Manager secret name. Supports `<owner>` placeholder substitution with the GitHub owner before reading the secret.                                                                                                                                    |
-| `STEP_API_KEY_SECRET_REGION` | `us-west-2`                               | AWS region for the Secrets Manager secret.                                                                                                                                                                                                                   |
+| `STEP_API_KEY_SECRET_NAME` | `stepsecurity/orgs/<github_env>/<owner>/vm-api-key` | Secrets Manager secret-name template. Replaces `<github_env>` with `ghec`, `ghdr`, or `ghes`, and `<owner>` with the GitHub owner. |
 | `STEP_API_KEY_SECRET_FIELD`  | `api_key`                                 | JSON field inside the Secrets Manager secret that contains the API key.                                                                                                                                                                                      |
 | `STEP_API`                   | `https://agent.api.stepsecurity.io/v1`    | StepSecurity API endpoint.                                                                                                                                                                                                                                   |
 | `STEP_TELEMETRY_URL`         | `https://prod.app-api.stepsecurity.io/v1` | StepSecurity telemetry endpoint.                                                                                                                                                                                                                             |
 
 Set these values in the wrapper scripts or inject them through your runner configuration before running the hook. On Linux wrapper scripts, use `export STEP_NAME=value`. On Windows wrapper scripts, set them with PowerShell environment assignments such as `$env:STEP_AGENT_ROOT_WINDOWS='C:\agent'`.
 
-Each hook validates configured network endpoints at startup and logs warnings for failures. Pre-job hooks check `STEP_API`, `STEP_TELEMETRY_URL`, `STEP_ARTIFACTORY_BASE` or `ARTIFACTORY_BASE` when set, and AWS STS and Secrets Manager regional endpoints when `STEP_API_KEY_ROLE_ARN` is set. The post-job hook checks only `STEP_API`. API-discovered agent asset URLs are not preflighted. VM pre-job hooks require either `STEP_API_KEY` or `STEP_API_KEY_ROLE_ARN`; if neither is set, the hook logs the configuration problem and exits successfully after printing detailed diagnostics. Kubernetes pre-job hooks do not require API-key-related env vars during preflight.
+Each hook validates configured network endpoints at startup and logs warnings for failures. Pre-job hooks check `STEP_API`, `STEP_TELEMETRY_URL`, `STEP_ARTIFACTORY_BASE` or `ARTIFACTORY_BASE` when set, and, for VM keyless mode, AWS STS and Secrets Manager regional endpoints after resolving the region from Artifactory. The post-job hook checks only `STEP_API`. API-discovered agent asset URLs are not preflighted. VM pre-job hooks require either `STEP_API_KEY` or Artifactory keyless configuration; if configuration is missing or invalid, the hook logs the configuration problem and exits successfully after printing detailed diagnostics. Kubernetes pre-job hooks do not require API-key-related env vars during preflight.
 
 ### Windows agent service
 
@@ -179,15 +178,41 @@ sc.exe qc StepSecurityAgent
 The hook resolves the API key in this order:
 
 1. `STEP_API_KEY`
-2. AWS Secrets Manager, using `STEP_API_KEY_ROLE_ARN`
+2. AWS Secrets Manager, using a role ARN and region from an Artifactory configuration artifact
 
-To resolve the API key from AWS Secrets Manager, set:
+For VM keyless mode, set `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO` in the pre-job wrapper. Create exactly one matching configuration item in that repository with these properties:
 
-- `STEP_API_KEY_ROLE_ARN` to a role the runner can assume
-- `STEP_API_KEY_SECRET_NAME` to the secret name; use `<owner>` in the value if the name is org-specific, for example `stepsecurity/orgs/github-orgs/<owner>/vm-api-key`
-- `STEP_API_KEY_SECRET_REGION` if the secret is not in `us-west-2`
-- the GitHub owner to match the secret's `OrgName` tag, which is passed to STS as a session tag during `AssumeRole`
-- `STEP_API_KEY_SECRET_FIELD` if the JSON field is not `api_key`
+```text
+ss.serving=true
+ss.gha-hook-config=true
+```
+
+The hook downloads that item's `downloadUri`. The artifact must contain:
+
+```json
+{
+  "region": "us-west-2",
+  "roleArn": "arn:aws:iam::123456789012:role/stepsecurity-api-key-reader"
+}
+```
+
+The hook detects the GitHub environment from `GITHUB_SERVER_URL`, defaulting to `https://github.com` when unset:
+
+| Hostname | `<github_env>` value |
+| --- | --- |
+| `github.com` or `*.localhost` | `ghec` |
+| `*.ghe.com` | `ghdr` |
+| Any other hostname | `ghes` |
+
+For GHDR and GHES VM runners, set `STEP_CUSTOMER` and `STEP_SERVER_NAME`. Policy Store requests and the repository identity sent to the agent use `<customer>::<server_name>::<owner>`, and the generated agent JSON includes `"is_ghes": true`. API-key secret-name replacement and the `OrgName` STS session tag continue to use the raw GitHub owner.
+
+It reads the configuration once per pre-job invocation, logs the resolved region, and resolves the secret name from `STEP_API_KEY_SECRET_NAME`, which defaults to `stepsecurity/orgs/<github_env>/<owner>/vm-api-key`, preserving the GitHub owner's casing. A missing download URL, an invalid configuration file, or multiple matching configuration items produce a configuration error. There is no fallback to the former runner role or region environment variables.
+
+The template replaces every `<github_env>` and `<owner>` placeholder; either placeholder may be omitted, and a fixed secret name is also supported. To retain the `github-orgs` prefix, set `STEP_API_KEY_SECRET_NAME="stepsecurity/orgs/github-orgs/<github_env>/<owner>/vm-api-key"`.
+
+The runner must have AWS credentials that can assume the configured role. The GitHub owner is passed as the `OrgName` session tag during `AssumeRole` and must match the secret's `OrgName` tag. Set `STEP_API_KEY_SECRET_FIELD` only if the JSON field differs from the default `api_key`.
+
+Before rolling out these hooks, provision the new environment-specific VM secrets, grant the configured role access to them, and publish the Artifactory configuration. Kubernetes ARC secret paths and agent configuration are unchanged.
 
 The secret value must be a JSON object containing the API key field, for example:
 

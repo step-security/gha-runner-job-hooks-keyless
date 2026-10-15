@@ -13,10 +13,17 @@ differs:
   it periodically.
 
 In both cases the key lives in AWS Secrets Manager in your account, under
-the same naming scheme; only the suffix differs per scenario:
+these paths:
 
 - Kubernetes runners (ARC): `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`
-- VM runners: `stepsecurity/orgs/github-orgs/<ORG_NAME>/vm-api-key`
+- VM runners: `stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/vm-api-key`
+
+For VM runners, use `ghec` for github.com (or local testing), `ghdr` for
+`*.ghe.com` data residency, and `ghes` for GitHub Enterprise Server. Preserve
+the organization name's casing. If `STEP_API_KEY_SECRET_NAME` is customized,
+use the resolved custom path instead of the VM default shown here. The VM hook
+resolves the AWS role and region from Artifactory; see
+[API key configuration](../README.md#resolving-the-stepsecurity-api-key).
 
 Rotating means updating that stored value. No agent or runner changes are
 needed.
@@ -60,8 +67,8 @@ the last rotation. The cycle is:
    using it. Nothing is using the secondary, so nothing breaks.
 2. **Switch**: put the fresh secondary key into the secret in AWS Secrets
    Manager. Your installation picks it up and starts using it automatically.
-   The command is the same for both scenarios; only the secret name suffix
-   (`/arc-api-key` or `/vm-api-key`) differs.
+   The command is the same for both scenarios; use the appropriate secret
+   path above.
 3. **Drain**: wait until the primary key has gone unused for **at least one
    week**.
 4. **Revoke**: regenerate the primary key. Its old value stops working
@@ -134,12 +141,16 @@ last cycle (or since onboarding), so its previous value is stale;
 regenerating it revokes nothing in use.
 
 **2. Update the secret** in AWS Secrets Manager with the fresh secondary
-key. Use the `/arc-api-key` name for Kubernetes runners and the
-`/vm-api-key` name for VM runners:
+key. Set `SECRET_NAME` to the appropriate path for your deployment:
 
 ```bash
+# VM runners:
+SECRET_NAME="stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/vm-api-key"
+# For Kubernetes runners (ARC), use instead:
+# SECRET_NAME="stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key"
+
 aws secretsmanager put-secret-value \
-  --secret-id "stepsecurity/orgs/github-orgs/<ORG_NAME>/<arc-api-key|vm-api-key>" \
+  --secret-id "$SECRET_NAME" \
   --secret-string '{"api_key": "<SECONDARY_KEY>"}' \
   --region <AWS_REGION>
 ```
