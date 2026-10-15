@@ -153,6 +153,6 @@ export function assetChecksumSha256(checksum?: string): string {
   return checksum.slice("sha256:".length).toLowerCase();
 }
 
-function toLogValue(value: string): string {
+export function toLogValue(value: string): string {
   return JSON.stringify(value);
 }

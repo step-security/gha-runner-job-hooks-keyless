@@ -4,7 +4,7 @@ const test = require("node:test");
 const {
   downloadHookConfig,
   getApiKeyName,
-  resolveHookConfigArtifact,
+  resolveHookConfigUris,
 } = require("../src/lib/api-key.ts");
 
 test("getApiKeyName resolves the default template", () => {
@@ -40,25 +40,24 @@ test("getApiKeyName supports partial and fixed templates", () => {
   );
 });
 
-test("resolveHookConfigArtifact searches and downloads the result", async () => {
+test("resolveHookConfigUris searches and returns every download URI", async () => {
   const artifactoryConfig = {
     base: "https://artifactory.example.com/artifactory",
     repo: "stepsecurity",
   };
   let searchedConfig;
   let searchedSelectors;
-  let downloadedUri;
 
-  const result = await resolveHookConfigArtifact(
+  const result = await resolveHookConfigUris(
     artifactoryConfig,
     async (config, selectors) => {
       searchedConfig = config;
       searchedSelectors = selectors;
-      return [{ downloadUri: "https://artifactory.example.com/config.json" }];
-    },
-    async (downloadUri) => {
-      downloadedUri = downloadUri;
-      return { region: "us-west-2", roleArn: "arn:aws:iam::123:role/reader" };
+      return [
+        { downloadUri: "https://artifactory.example.com/primary.json" },
+        {},
+        { downloadUri: " https://artifactory.example.com/secondary.json " },
+      ];
     },
   );
 
@@ -67,44 +66,24 @@ test("resolveHookConfigArtifact searches and downloads the result", async () => 
     "ss.serving": "true",
     "ss.gha-hook-config": "true",
   });
-  assert.equal(downloadedUri, "https://artifactory.example.com/config.json");
-  assert.deepEqual(result, {
-    region: "us-west-2",
-    roleArn: "arn:aws:iam::123:role/reader",
-  });
+  assert.deepEqual(result, [
+    "https://artifactory.example.com/primary.json",
+    "https://artifactory.example.com/secondary.json",
+  ]);
 });
 
-test("resolveHookConfigArtifact requires one result with a download URI", async () => {
+test("resolveHookConfigUris requires a result with a download URI", async () => {
   const artifactoryConfig = {
     base: "https://artifactory.example.com/artifactory",
     repo: "stepsecurity",
   };
-  const unusedFetch = async () => {
-    throw new Error("fetch should not be called");
-  };
 
   await assert.rejects(
-    resolveHookConfigArtifact(
-      artifactoryConfig,
-      async () => [],
-      unusedFetch,
-    ),
+    resolveHookConfigUris(artifactoryConfig, async () => []),
     /unexpected-result-count count=0/,
   );
   await assert.rejects(
-    resolveHookConfigArtifact(
-      artifactoryConfig,
-      async () => [{}, {}],
-      unusedFetch,
-    ),
-    /unexpected-result-count count=2/,
-  );
-  await assert.rejects(
-    resolveHookConfigArtifact(
-      artifactoryConfig,
-      async () => [{}],
-      unusedFetch,
-    ),
+    resolveHookConfigUris(artifactoryConfig, async () => [{}, {}]),
     /missing-download-uri/,
   );
 });
