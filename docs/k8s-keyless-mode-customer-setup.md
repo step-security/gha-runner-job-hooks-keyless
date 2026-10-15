@@ -53,7 +53,7 @@ Identity association.
 | Role trust policy trusts | Runner's IAM principal | Cluster's OIDC provider, with `sub` and `aud` conditions matching the service account | Source role: `pods.eks.amazonaws.com`. Target role: the source role's ARN |
 | OIDC provider | Not used | Cluster issuer registered in the account that holds the role (one time, Part B1) | Not used |
 | Roles involved | One | One (in the Central account) | Two (source in DevOps, target in Central) |
-| Secret name | `stepsecurity/orgs/<owner>/vm-api-key` | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` |
+| Secret name | `stepsecurity/orgs/<environment>/<owner>/vm-api-key` (`ghec`, `ghdr`, or `ghes`) | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` |
 | Who calls AWS | Pre-job hook, per job (temporary 900s credentials) | Harden-Runner DaemonSet, refreshed periodically, not the hook | Harden-Runner DaemonSet, refreshed periodically, not the hook |
 | Cross-account | Possible with the same pattern (role trusts the runner account) | First class: role and secret live in the Central account, cluster in another, trust via OIDC | First class: target role and secret live in the Central account, trust via role-to-role chaining |
 
@@ -109,7 +109,7 @@ Shared:
   Central team when the secret is created. StepSecurity issues two keys per
   scenario (a primary and a secondary key); use the primary key here. If you
   also use Harden-Runner on VM runners, that scenario has its own separate key
-  pair and secret (`stepsecurity/orgs/github-orgs/<ORG_NAME>/vm-api-key`); the
+  pair and secret (`stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/vm-api-key`); the
   keys are not interchangeable between scenarios.
 - Ability to upgrade the Harden-Runner Helm release.
 

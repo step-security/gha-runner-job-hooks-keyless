@@ -2,7 +2,14 @@ const http = require("http") as typeof import("http");
 const https = require("https") as typeof import("https");
 
 import { logInfo, logWarning } from "./common";
-import { ApiKeyConfig, ArtifactoryConfig, Urls } from "./config";
+import {
+  ApiKeyConfig,
+  ArtifactoryConfig,
+  GhesConfig,
+  Urls,
+} from "./config";
+import { isArtifactoryConfigured } from "./artifactory";
+import { getGitHubEnv } from "./github-context";
 
 const DefaultTimeoutMs = 5000;
 
@@ -33,18 +40,7 @@ export async function runConfiguredEndpointPreflight(
 
   logInfo(`Preflight action=start endpoint_count=${endpoints.length}`);
 
-  const endpointFailures = (
-    await Promise.all(
-      endpoints.map(async (endpoint) => {
-        try {
-          await preflightEndpoint(endpoint.label, endpoint.url);
-          return "";
-        } catch (error) {
-          return error instanceof Error ? error.message : String(error);
-        }
-      }),
-    )
-  ).filter(Boolean);
+  const endpointFailures = await collectEndpointFailures(endpoints);
   const failures = [...configFailures, ...endpointFailures];
 
   for (const failure of failures) {
@@ -56,6 +52,37 @@ export async function runConfiguredEndpointPreflight(
   }
 }
 
+export async function runAwsEndpointPreflight(region: string): Promise<void> {
+  const failures = await collectEndpointFailures([
+    {
+      label: "AWS STS regional endpoint",
+      url: `https://sts.${region}.amazonaws.com/`,
+    },
+    {
+      label: "AWS Secrets Manager regional endpoint",
+      url: `https://secretsmanager.${region}.amazonaws.com/`,
+    },
+  ]);
+  for (const failure of failures) {
+    logWarning(failure);
+  }
+}
+
+function collectEndpointFailures(
+  endpoints: Array<{ label: string; url: string }>,
+): Promise<string[]> {
+  return Promise.all(
+    endpoints.map(async (endpoint) => {
+      try {
+        await preflightEndpoint(endpoint.label, endpoint.url);
+        return "";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    }),
+  ).then((failures) => failures.filter(Boolean));
+}
+
 function collectConfigFailures(
   options: ConfiguredEndpointPreflightOptions,
 ): string[] {
@@ -64,11 +91,24 @@ function collectConfigFailures(
   if (
     options.requireVmApiKey &&
     !ApiKeyConfig.envApiKey.trim() &&
-    !ApiKeyConfig.roleArn.trim()
+    !isArtifactoryConfigured(ArtifactoryConfig)
   ) {
     failures.push(
-      "Preflight status=config-invalid reason=missing-api-key-or-role-arn",
+      "Preflight status=config-invalid reason=missing-api-key-or-artifactory-config",
     );
+  }
+
+  if (options.requireVmApiKey && getGitHubEnv() !== "ghec") {
+    if (!GhesConfig.customer.trim()) {
+      failures.push(
+        "Preflight status=config-invalid reason=missing-step-customer",
+      );
+    }
+    if (!GhesConfig.serverName.trim()) {
+      failures.push(
+        "Preflight status=config-invalid reason=missing-step-server-name",
+      );
+    }
   }
 
   const artifactoryValues = [
@@ -106,20 +146,6 @@ function collectConfiguredEndpoints(
       label: "Artifactory base URL",
       url: ArtifactoryConfig.base,
     });
-  }
-
-  if (ApiKeyConfig.roleArn.trim()) {
-    const region = ApiKeyConfig.secretRegion;
-    endpoints.push(
-      {
-        label: "AWS STS regional endpoint",
-        url: `https://sts.${region}.amazonaws.com/`,
-      },
-      {
-        label: "AWS Secrets Manager regional endpoint",
-        url: `https://secretsmanager.${region}.amazonaws.com/`,
-      },
-    );
   }
 
   return dedupeEndpoints(endpoints);
