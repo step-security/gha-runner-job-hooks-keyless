@@ -62,6 +62,20 @@ export async function appendJobSummary(params: {
   }
 }
 
+export function appendSummaryMarkdown(markdown: string): void {
+  if (!markdown || !RuntimeConfig.stepSummaryPath) {
+    return;
+  }
+
+  try {
+    fs.appendFileSync(RuntimeConfig.stepSummaryPath, markdown, "utf8");
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message ? error.message : "unknown";
+    logWarning(`Summary action=write status=error error=${message}`);
+  }
+}
+
 function getStartTime(filePath: string): number {
   if (!filePath) {
     return 0;
