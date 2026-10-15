@@ -1,12 +1,28 @@
-import { getWithRetry, logError, logInfo } from "./common";
+import {
+  getWithRetry,
+  logError,
+  logErrorAnnotation,
+  logInfo,
+  logWarning,
+  terminateRunnerWorker,
+} from "./common";
 import { Urls } from "./config";
+import { appendSummaryMarkdown } from "./summary";
 
 export type WorkflowPolicyCheckResult = {
   hasPolicy: boolean;
   shouldSleep: boolean;
+  runPolicyEvaluation: RunPolicyEvaluation | null;
 };
 
 export type WorkflowPolicyStatus = "APPLIED" | "NOT_APPLIED" | "SLEEP";
+export type RunPolicyConclusion = "block" | "proceed";
+
+export type RunPolicyEvaluation = {
+  conclusion: RunPolicyConclusion;
+  summaryMarkdown?: string;
+  summaryLog?: string;
+};
 
 export type WorkflowPolicyCheckParams = {
   owner: string;
@@ -29,9 +45,21 @@ export type PolicyStoreConfig = {
 };
 
 export type PolicyStoreFetchResult =
-  | { status: "found"; config: PolicyStoreConfig }
-  | { status: "not_found" }
-  | { status: "error" };
+  | {
+      status: "found";
+      config: PolicyStoreConfig;
+      runPolicyEvaluation: RunPolicyEvaluation | null;
+    }
+  | {
+      status: "not_found" | "error";
+      runPolicyEvaluation: RunPolicyEvaluation | null;
+    };
+
+type WorkflowPolicyCheckResponse = {
+  has_policy?: unknown;
+  should_sleep?: unknown;
+  run_policy_evaluation?: unknown;
+};
 
 type PolicyStoreResponse = {
   policy_name?: unknown;
@@ -42,29 +70,8 @@ type PolicyStoreResponse = {
   disable_file_monitoring?: unknown;
   disable_telemetry?: unknown;
   egress_policy?: unknown;
+  run_policy_evaluation?: unknown;
 };
-
-function parseBooleanField(body: string, fieldName: string): boolean {
-  try {
-    const response = JSON.parse(body) as Record<string, unknown>;
-    return response[fieldName] === true;
-  } catch {
-    return false;
-  }
-}
-
-function parseStatusField(body: string): WorkflowPolicyStatus {
-  try {
-    const response = JSON.parse(body) as { status?: unknown };
-    if (response.status === "APPLIED" || response.status === "NOT_APPLIED") {
-      return response.status;
-    }
-  } catch {
-    // ignore
-  }
-
-  return "SLEEP";
-}
 
 export async function fetchWorkflowPolicyCheck(
   params: WorkflowPolicyCheckParams,
@@ -75,6 +82,7 @@ export async function fetchWorkflowPolicyCheck(
   url.searchParams.append("workflow", params.workflow);
   url.searchParams.append("run_id", params.runId);
   url.searchParams.append("correlationId", params.correlationId);
+  url.searchParams.append("evaluate_run_policies", "true");
 
   logInfo(`Policy store request URL: ${url.toString()}`);
 
@@ -87,19 +95,16 @@ export async function fetchWorkflowPolicyCheck(
     if (String(statusCode) !== "200") {
       logError(`API call failed with status ${statusCode}`);
       logInfo(`Response: ${body}`);
-      return { hasPolicy: false, shouldSleep: false };
+      return { hasPolicy: false, shouldSleep: false, runPolicyEvaluation: null };
     }
 
-    return {
-      hasPolicy: parseBooleanField(body, "has_policy"),
-      shouldSleep: parseBooleanField(body, "should_sleep"),
-    };
+    return parseWorkflowPolicyCheckResponse(body);
   } catch (error) {
     const status =
       error instanceof Error && error.message ? error.message : "unknown";
     logError(`API call failed with status ${status}`);
     logInfo("Response: ");
-    return { hasPolicy: false, shouldSleep: false };
+    return { hasPolicy: false, shouldSleep: false, runPolicyEvaluation: null };
   }
 }
 
@@ -112,7 +117,7 @@ export async function fetchPolicyStoreConfig(params: {
   apiKey: string;
 }): Promise<PolicyStoreFetchResult> {
   if (!params.apiKey) {
-    return { status: "error" };
+    return { status: "error", runPolicyEvaluation: null };
   }
 
   const url = new URL(
@@ -121,6 +126,7 @@ export async function fetchPolicyStoreConfig(params: {
   url.searchParams.append("workflow", params.workflow);
   url.searchParams.append("run_id", params.runId);
   url.searchParams.append("correlationId", params.correlationId);
+  url.searchParams.append("evaluate_run_policies", "true");
 
   logInfo(`Policy fetch URL: ${url.toString()}`);
 
@@ -128,32 +134,34 @@ export async function fetchPolicyStoreConfig(params: {
     const { statusCode, body } = await getWithRetry(url, {
       Authorization: `vm-api-key ${params.apiKey}`,
     });
+    const runPolicyEvaluation = parseRunPolicyEvaluationFromBody(body);
 
     if (String(statusCode) === "404") {
-      return { status: "not_found" };
+      return { status: "not_found", runPolicyEvaluation };
     }
 
     if (String(statusCode) !== "200") {
       logError(`Policy fetch failed with status ${statusCode}`);
       logInfo(`Response: ${body}`);
-      return { status: "error" };
+      return { status: "error", runPolicyEvaluation };
     }
 
     const config = parsePolicyStoreConfig(body);
     if (!config) {
-      return { status: "not_found" };
+      return { status: "not_found", runPolicyEvaluation };
     }
 
     return {
       status: "found",
       config,
+      runPolicyEvaluation,
     };
   } catch (error) {
     const status =
       error instanceof Error && error.message ? error.message : "unknown";
     logError(`Policy fetch failed with status ${status}`);
     logInfo("Response: ");
-    return { status: "error" };
+    return { status: "error", runPolicyEvaluation: null };
   }
 }
 
@@ -177,6 +185,65 @@ export async function fetchWorkflowPolicyStatus(params: {
   } catch {
     return "SLEEP";
   }
+}
+
+export function handleBlockedRunPolicyEvaluation(
+  runPolicyEvaluation: RunPolicyEvaluation | null,
+): void {
+  if (runPolicyEvaluation?.conclusion !== "block") {
+    return;
+  }
+
+  if (runPolicyEvaluation.summaryMarkdown) {
+    appendSummaryMarkdown(runPolicyEvaluation.summaryMarkdown);
+  }
+
+  if (runPolicyEvaluation.summaryLog) {
+    console.log(runPolicyEvaluation.summaryLog);
+  }
+
+  // Before terminateRunnerWorker(), which kills the worker reading this stdout.
+  logErrorAnnotation(
+    "StepSecurity workflow run policy",
+    "Job cancelled: the workflow run policy concluded block.",
+  );
+
+  logWarning(
+    "Workflow is being cancelled because workflow run policy concluded with block",
+  );
+
+  terminateRunnerWorker();
+  process.exit(1);
+}
+
+function parseWorkflowPolicyCheckResponse(
+  body: string,
+): WorkflowPolicyCheckResult {
+  try {
+    const response = JSON.parse(body) as WorkflowPolicyCheckResponse;
+    return {
+      hasPolicy: response.has_policy === true,
+      shouldSleep: response.should_sleep === true,
+      runPolicyEvaluation: parseRunPolicyEvaluation(
+        response.run_policy_evaluation,
+      ),
+    };
+  } catch {
+    return { hasPolicy: false, shouldSleep: false, runPolicyEvaluation: null };
+  }
+}
+
+function parseStatusField(body: string): WorkflowPolicyStatus {
+  try {
+    const response = JSON.parse(body) as { status?: unknown };
+    if (response.status === "APPLIED" || response.status === "NOT_APPLIED") {
+      return response.status;
+    }
+  } catch {
+    // ignore
+  }
+
+  return "SLEEP";
 }
 
 export function parsePolicyStoreConfig(body: string): PolicyStoreConfig | null {
@@ -208,4 +275,42 @@ function endpointArrayToString(value: unknown): string {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string").join(" ")
     : "";
+}
+
+function parseRunPolicyEvaluationFromBody(
+  body: string,
+): RunPolicyEvaluation | null {
+  try {
+    return parseRunPolicyEvaluation(
+      (JSON.parse(body) as PolicyStoreResponse).run_policy_evaluation,
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function parseRunPolicyEvaluation(
+  value: unknown,
+): RunPolicyEvaluation | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const response = value as Record<string, unknown>;
+  if (response.conclusion !== "block" && response.conclusion !== "proceed") {
+    return null;
+  }
+
+  return {
+    conclusion: response.conclusion,
+    summaryMarkdown:
+      typeof response.summary_markdown === "string" &&
+      response.summary_markdown.length > 0
+        ? response.summary_markdown
+        : undefined,
+    summaryLog:
+      typeof response.summary_log === "string" && response.summary_log.length > 0
+        ? response.summary_log
+        : undefined,
+  };
 }

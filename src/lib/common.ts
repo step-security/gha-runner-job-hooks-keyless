@@ -23,6 +23,10 @@ export function logInfo(message: string): void {
   console.log(`[StepSecurity] ${message}`);
 }
 
+export function logErrorAnnotation(title: string, message: string): void {
+  console.log(`::error title=${title}::${message}`);
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -203,4 +207,23 @@ export function handleFatalError(error: unknown): never {
   }
 
   process.exit(0);
+}
+
+export function terminateRunnerWorker(): void {
+  sleepSync(7000); // wait for 7 seconds
+
+  const result =
+    process.platform === "win32"
+      ? runCommand(
+          "taskkill.exe",
+          ["/F", "/IM", "Runner.Worker.exe", "/T"],
+          { silent: true },
+        )
+      : runCommand("pkill", ["-f", "Runner.Worker"], { silent: true });
+
+  logCommandFailure("RunnerWorker action=terminate", result);
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

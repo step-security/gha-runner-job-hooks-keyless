@@ -1,4 +1,7 @@
-import { buildSharedAgentJsonForCurrentJob } from "../lib/agent-config";
+import {
+  buildSharedAgentJsonForCurrentJob,
+  fetchJobPolicyForCurrentJob,
+} from "../lib/agent-config";
 import { AgentFiles, AgentRuntimeConfig } from "../lib/config";
 import { logInfo } from "../lib/common";
 import { runConfiguredEndpointPreflight } from "../lib/preflight";
@@ -27,10 +30,14 @@ async function runLinuxVmPreJobHook(): Promise<void> {
   await runConfiguredEndpointPreflight({ requireVmApiKey: true });
   logInfo("Hook phase=pre platform=linux runtime=vm");
   ensureLinuxAgentRoot();
-  await buildSharedAgentJsonForCurrentJob({
-    agentJsonPath: AgentFiles.linux.agentJson,
-    isPersistent: !AgentRuntimeConfig.isEphemeralLinux,
-  });
+  const jobPolicy = await fetchJobPolicyForCurrentJob();
+  await buildSharedAgentJsonForCurrentJob(
+    {
+      agentJsonPath: AgentFiles.linux.agentJson,
+      isPersistent: !AgentRuntimeConfig.isEphemeralLinux,
+    },
+    jobPolicy,
+  );
   await ensureLatestBravoLinuxAgent();
   await startAgentProcess();
   logInfo("Hook phase=pre platform=linux runtime=vm status=completed");
