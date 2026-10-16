@@ -180,14 +180,14 @@ The hook resolves the API key in this order:
 1. `STEP_API_KEY`
 2. AWS Secrets Manager, using a role ARN and region from an Artifactory configuration artifact
 
-For VM keyless mode, set `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO` in the pre-job wrapper. Create exactly one matching configuration item in that repository with these properties:
+For VM keyless mode, set `STEP_ARTIFACTORY_BASE` and `STEP_ARTIFACTORY_REPO` in the pre-job wrapper. Create one or more matching configuration items in that repository with these properties:
 
 ```text
 ss.serving=true
 ss.gha-hook-config=true
 ```
 
-The hook downloads that item's `downloadUri`. The artifact must contain:
+The hook downloads each item's `downloadUri`. If more than one item matches, the hook tries them in turn and stops at the first one whose API key it can fetch. If one item fails (download, invalid file, AWS endpoint check, assume-role or secret read), it logs a warning and moves to the next item. If every item fails, pre-job fails with the last error. Artifactory decides the order, so don't rely on one item always being tried first. Each artifact must contain:
 
 ```json
 {
@@ -206,7 +206,7 @@ The hook detects the GitHub environment from `GITHUB_SERVER_URL`, defaulting to 
 
 For GHDR and GHES VM runners, set `STEP_CUSTOMER` and `STEP_SERVER_NAME`. Policy Store requests and the repository identity sent to the agent use `<customer>::<server_name>::<owner>`, and the generated agent JSON includes `"is_ghes": true`. API-key secret-name replacement and the `OrgName` STS session tag continue to use the raw GitHub owner.
 
-It reads the configuration once per pre-job invocation, logs the resolved region, and resolves the secret name from `STEP_API_KEY_SECRET_NAME`, which defaults to `stepsecurity/orgs/<github_env>/<owner>/vm-api-key`, preserving the GitHub owner's casing. A missing download URL, an invalid configuration file, or multiple matching configuration items produce a configuration error. There is no fallback to the former runner role or region environment variables.
+It reads the configuration once per pre-job invocation, logs each configuration URL it tries and its region, and resolves the secret name from `STEP_API_KEY_SECRET_NAME`, which defaults to `stepsecurity/orgs/<github_env>/<owner>/vm-api-key`, preserving the GitHub owner's casing. No matching configuration items, or no item with a download URL, produce a configuration error. There is no fallback to the former runner role or region environment variables.
 
 The template replaces every `<github_env>` and `<owner>` placeholder; either placeholder may be omitted, and a fixed secret name is also supported. To retain the `github-orgs` prefix, set `STEP_API_KEY_SECRET_NAME="stepsecurity/orgs/github-orgs/<github_env>/<owner>/vm-api-key"`.
 
