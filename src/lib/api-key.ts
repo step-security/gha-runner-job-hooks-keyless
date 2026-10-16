@@ -10,6 +10,7 @@ import {
   ArtifactoryConfigValues,
   isArtifactoryConfigured,
   searchArtifactsByProperties,
+  toLogValue,
 } from "./artifactory";
 import { getGitHubEnv, GitHubEnv } from "./github-context";
 import { runAwsEndpointPreflight } from "./preflight";
@@ -54,21 +55,37 @@ export async function resolveApiKey(
   }
 
   const githubEnv = getGitHubEnv();
-  const config = await resolveHookConfigArtifact();
+  const downloadUris = await resolveHookConfigUris();
   const secretName = getApiKeyName(
     githubEnv,
     options.owner,
     ApiKeyConfig.secretName,
   );
-  await runAwsEndpointPreflight(config.region);
-
   logInfo(`ApiKey source=secrets-manager secret_name=${secretName}`);
-  return fetchApiKeyFromSecret({
-    ...config,
-    secretName,
-    orgName: options.owner,
-    keyField: ApiKeyConfig.secretField,
-  });
+
+  let lastError: unknown;
+  for (const [index, downloadUri] of downloadUris.entries()) {
+    const attempt = `${index + 1}/${downloadUris.length}`;
+    logInfo(
+      `HookConfig action=try attempt=${attempt} url=${toLogValue(downloadUri)}`,
+    );
+    try {
+      const config = await downloadHookConfig(downloadUri);
+      logInfo(`HookConfig status=resolved region=${config.region}`);
+      await runAwsEndpointPreflight(config.region);
+      return await fetchApiKeyFromSecret({
+        ...config,
+        secretName,
+        orgName: options.owner,
+        keyField: ApiKeyConfig.secretField,
+      });
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      logWarning(`ApiKey status=failed attempt=${attempt} error=${message}`);
+    }
+  }
+  throw lastError;
 }
 
 export async function fetchApiKeyFromSecret(
@@ -130,13 +147,10 @@ export function getApiKeyName(
     .replace(/<owner>/g, () => owner);
 }
 
-export async function resolveHookConfigArtifact(
+export async function resolveHookConfigUris(
   artifactoryConfig: ArtifactoryConfigValues = ArtifactoryConfig,
   search: SearchHookConfig = searchArtifactsByProperties,
-  fetchConfig: (
-    downloadUri: string,
-  ) => Promise<HookConfig> = downloadHookConfig,
-): Promise<HookConfig> {
+): Promise<string[]> {
   if (!isArtifactoryConfigured(artifactoryConfig)) {
     throw new Error(
       "ApiKey status=config-invalid reason=missing-artifactory-config",
@@ -147,22 +161,23 @@ export async function resolveHookConfigArtifact(
     "ss.serving": "true",
     "ss.gha-hook-config": "true",
   });
-  if (results.length !== 1) {
+  if (results.length === 0) {
     throw new Error(
       `ApiKey status=config-invalid reason=unexpected-result-count count=${results.length}`,
     );
   }
 
-  const downloadUri = results[0].downloadUri?.trim();
-  if (!downloadUri) {
+  const downloadUris = results
+    .map((result) => result.downloadUri?.trim() || "")
+    .filter(Boolean);
+  if (downloadUris.length === 0) {
     throw new Error(
       "ApiKey status=config-invalid reason=missing-download-uri",
     );
   }
 
-  const config = await fetchConfig(downloadUri);
-  logInfo(`HookConfig status=resolved region=${config.region}`);
-  return config;
+  logInfo(`HookConfig status=found count=${downloadUris.length}`);
+  return downloadUris;
 }
 
 export async function downloadHookConfig(
