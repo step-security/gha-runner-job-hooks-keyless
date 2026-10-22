@@ -31,6 +31,7 @@ preference — choose based on the constraints in
 | OIDC provider registration + IAM role (single role) | **Central account** | Central team | IRSA |
 | Pod Identity Agent add-on + source IAM role + Pod Identity association | **DevOps account** | DevOps team | Pod Identity |
 | Target IAM role (trusts the source role) | **Central account** | Central team | Pod Identity |
+| Reader IAM role named in the Artifactory config (optional, shared with VM runners) | **Central account** | Central team | IRSA (see [Option: reader role via Artifactory config](#option-irsa-reader-role-via-artifactory-config)) |
 
 Neither team needs credentials for the other team's account at any point, on
 either track.
@@ -52,8 +53,8 @@ Identity association.
 | Identity presented to AWS | Runner's IAM principal. The StepSecurity org is passed as an `OrgName` STS session tag | Kubernetes service account (`system:serviceaccount:<namespace>:hardenrunner`) as an OIDC JWT | Pod Identity association (cluster + namespace + service account), forwarded as session tags |
 | Role trust policy trusts | Runner's IAM principal | Cluster's OIDC provider, with `sub` and `aud` conditions matching the service account | Source role: `pods.eks.amazonaws.com`. Target role: the source role's ARN |
 | OIDC provider | Not used | Cluster issuer registered in the account that holds the role (one time, Part B1) | Not used |
-| Roles involved | One | One (in the Central account) | Two (source in DevOps, target in Central) |
-| Secret name | `stepsecurity/orgs/<environment>/<owner>/vm-api-key` (`ghec`, `ghdr`, or `ghes`) | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` |
+| Roles involved | One | One (in the Central account); two when the IRSA role chains into a reader role named in the Artifactory config | Two (source in DevOps, target in Central) |
+| Secret name | `stepsecurity/orgs/<ghec\|ghdr\|ghes>/<ORG_NAME>/vm-api-key` | `stepsecurity/orgs/<ghec\|ghdr\|ghes>/<ORG_NAME>/arc-api-key` (recommended, via `env.keyless.secretName`); built-in default `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | same as IRSA |
 | Who calls AWS | Pre-job hook, per job (temporary 900s credentials) | Harden-Runner DaemonSet, refreshed periodically, not the hook | Harden-Runner DaemonSet, refreshed periodically, not the hook |
 | Cross-account | Possible with the same pattern (role trusts the runner account) | First class: role and secret live in the Central account, cluster in another, trust via OIDC | First class: target role and secret live in the Central account, trust via role-to-role chaining |
 
@@ -81,8 +82,9 @@ policy to a cluster-specific issuer.
 
 ## Why the credentials must belong to a Central-account role
 
-The agent looks up the secret **by name**
-(`stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`), not by full ARN. A
+The agent looks up the secret **by name** (the `env.keyless.secretName` value, or
+the built-in default `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`),
+not by full ARN. A
 name-only `GetSecretValue` call resolves in the account of the credentials
 making the call. Therefore, on both tracks:
 
@@ -158,7 +160,11 @@ simpler fit.
    cluster's issuer.
 5. STS returns temporary credentials for the Central role. The role's only
    permission is `secretsmanager:GetSecretValue` on the one API key secret
-   in the Central account, so that is all the pod can do with them.
+   in the Central account, so that is all the pod can do with them. (If the
+   Helm release points the agent at an Artifactory config, the IRSA role
+   instead assumes the reader role named in that config, and the reader role
+   is what reads the secret; see
+   [Option: reader role via Artifactory config](#option-irsa-reader-role-via-artifactory-config).)
 6. On startup, and every few hours after, the agent reads the API key from
    the secret. The refreshed key takes effect immediately, with no restarts.
 
@@ -185,6 +191,7 @@ sequenceDiagram
 | B1 | Register the cluster's OIDC provider in IAM | Central | Central |
 | B2 | Create the API key secret in Secrets Manager | Central | Central |
 | B3 | Create the IAM role (trust + permission policy), hand role ARN to DevOps | Central | Central |
+| B4 (optional) | Artifactory config in use: let the IRSA role assume the reader role, and let the reader role read the ARC secret | Central | Central |
 | C1 | Update Helm values with the Central role ARN and apply | DevOps | DevOps |
 | C2 | Verify wiring and pod logs | DevOps | DevOps (cluster) |
 | Ongoing | Key rotation | Central | Central |
@@ -195,8 +202,9 @@ sequenceDiagram
 
 - DevOps → Central (before Part B): OIDC issuer URL, Kubernetes namespace,
   service account name, StepSecurity org name, desired secret region.
-- Central → DevOps (before Part C): IAM role ARN, secret region (if different
-  from the cluster's region).
+- Central → DevOps (before Part C): IAM role ARN, secret name (for
+  `env.keyless.secretName`), secret region (if different from the cluster's
+  region).
 
 ```mermaid
 sequenceDiagram
@@ -208,7 +216,7 @@ sequenceDiagram
     Note over C: B1 Register cluster OIDC provider in IAM
     Note over C: B2 Create API key secret in Secrets Manager
     Note over C: B3 Create IAM role<br/>(trust + permission policy)
-    C->>D: Handoff: IAM role ARN, secret region
+    C->>D: Handoff: IAM role ARN, secret name, secret region
     Note over D: C1 Set Helm values with role ARN, apply
     Note over D: C2 Verify wiring and pod logs
 
@@ -293,12 +301,33 @@ AWS pins the root CA for EKS OIDC endpoints.)
 
 ### B2: Create the secret in Secrets Manager
 
-The secret lives in `SECRET_REGION`, with this exact name:
-`stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`. The value must be a
-JSON object containing the API key: `{"api_key": "..."}`.
+The secret lives in `SECRET_REGION`. The value must be a JSON object
+containing the API key: `{"api_key": "..."}`.
+
+The agent looks the secret up by name. The built-in default is
+`stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`, but the name can be
+overridden per release with the `env.keyless.secretName` Helm value (name or
+full ARN), and we recommend doing so:
+
+| Naming | Secret name | Helm |
+| --- | --- | --- |
+| Recommended | `stepsecurity/orgs/<ghec\|ghdr\|ghes>/<ORG_NAME>/arc-api-key` | set `env.keyless.secretName` to this exact name |
+| Built-in default | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | leave `env.keyless.secretName` empty |
+
+The recommended form mirrors the VM runner secret
+(`stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/vm-api-key`): one scheme for
+both runner types, one ARN pattern for the reader role, and no collision when
+the same org name exists on github.com and on a GHES/GHDR instance. Pick the
+segment from your GitHub environment: `ghec` for github.com, `ghdr` for
+`*.ghe.com`, `ghes` for any other hostname. Whichever name you pick, the
+secret name and the Helm value must match exactly; hand the final name to the
+DevOps team along with the role ARN.
 
 ```bash
-export SECRET_NAME="stepsecurity/orgs/github-orgs/${ORG_NAME}/arc-api-key"
+export GITHUB_ENV="ghec"                        # ghec | ghdr | ghes
+export SECRET_NAME="stepsecurity/orgs/${GITHUB_ENV}/${ORG_NAME}/arc-api-key"
+# Built-in default instead (env.keyless.secretName left empty):
+# export SECRET_NAME="stepsecurity/orgs/github-orgs/${ORG_NAME}/arc-api-key"
 
 # Prompt for the key so it never lands in shell history:
 read -r -s -p "StepSecurity API key: " STEPSECURITY_API_KEY; echo
@@ -402,8 +431,9 @@ echo "$ROLE_ARN"
 # e.g. arn:aws:iam::222222222222:role/StepSecurityHardenRunnerSecretReader
 ```
 
-Hand to the DevOps team: the **role ARN**, and the **secret region** if it
-differs from the cluster's region.
+Hand to the DevOps team: the **role ARN**, the **secret name** (so they can
+set `env.keyless.secretName`), and the **secret region** if it differs from the
+cluster's region.
 
 ## Part C (IRSA): DevOps team: Helm values and verification
 
@@ -425,6 +455,12 @@ env:
     # Required if the secret's region (from the Central handoff) differs from
     # the cluster's region. Leave unset if they are the same.
     # region: "us-east-1"
+    # Secret name from the Central handoff (name or full ARN). Required when
+    # the secret uses the recommended
+    # stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/arc-api-key name; leave
+    # empty only if Central used the built-in default
+    # stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key.
+    secretName: "stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/arc-api-key"
 
 serviceAccount:
   annotations:
@@ -471,6 +507,203 @@ A successful startup fetches the key before monitoring begins. If the pod
 cannot read the secret, the logs will show the error and the pod will keep
 retrying until access is fixed.
 
+## Option (IRSA): reader role via Artifactory config
+
+Skip this section if the Helm values do not set `keylessArtifactoryBase` and
+`keylessArtifactoryRepo`. In that case the IRSA role from B3 reads the secret
+directly and nothing below applies.
+
+If you already run the StepSecurity job hooks on VM runners in keyless mode,
+the hooks resolve their AWS access from a configuration artifact in
+Artifactory (property `ss.gha-hook-config=true`, content
+`{"region": "...", "roleArn": "..."}`). The ARC agent can use the **same
+artifact**, so the role that reads API keys is managed in one place for both
+runner types. Set both values together in the Helm release (Part C1):
+
+```yaml
+env:
+  customEnvVars:
+    - name: keylessArtifactoryBase
+      value: "https://artifactory.example.com/artifactory"
+    - name: keylessArtifactoryRepo
+      value: "stepsecurity"
+    # env.keyless.secretName from C1 stays as-is alongside these
+```
+
+With these set, the agent re-reads the artifact on every fetch (startup and
+each refresh), and the access path changes from one role to two:
+
+1. IRSA still establishes the pod as the Central role from B3 (the **IRSA
+   role**, `StepSecurityHardenRunnerSecretReader` in this guide).
+2. The agent calls `sts:AssumeRole` on the `roleArn` from the artifact (the
+   **reader role**, `stepsecurity-api-key-reader` in the examples below),
+   using the IRSA role's credentials. This is role chaining.
+3. The agent calls `GetSecretValue` with the **reader role's** credentials, in
+   the artifact's `region` (which overrides `env.keyless.region`).
+
+```mermaid
+sequenceDiagram
+    participant Pod as Harden-Runner pod<br/>(SA: hardenrunner)
+    participant Art as Artifactory
+    participant STS as AWS STS
+    participant SM as Secrets Manager (Central account)
+
+    Pod->>STS: AssumeRoleWithWebIdentity (IRSA role)
+    STS-->>Pod: IRSA role credentials
+    Pod->>Art: search ss.serving=true, ss.gha-hook-config=true, download config
+    Art-->>Pod: {"region", "roleArn"}
+    Pod->>STS: AssumeRole(roleArn) with IRSA role credentials
+    STS-->>Pod: Reader role credentials
+    Pod->>SM: GetSecretValue (stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key)
+    SM-->>Pod: api_key
+```
+
+So three IAM pieces must line up, all in the Central account (phase B4, Central
+team). Each one missing produces a distinct error; see the troubleshooting
+rows below.
+
+### B4a: Allow the IRSA role to assume the reader role
+
+The IRSA role no longer needs `secretsmanager:GetSecretValue` itself. Replace
+the B3b policy with one that only allows assuming the reader role:
+
+```bash
+export READER_ROLE_ARN="arn:aws:iam::${SEC_ACCOUNT_ID}:role/stepsecurity-api-key-reader"   # the roleArn in the Artifactory config
+
+cat > /tmp/harden-runner-assume-reader.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "${READER_ROLE_ARN}"
+    }
+  ]
+}
+EOF
+
+aws iam put-role-policy \
+  --role-name "$ROLE_NAME" \
+  --policy-name "StepSecurityKeylessSecretRead" \
+  --policy-document file:///tmp/harden-runner-assume-reader.json
+
+rm /tmp/harden-runner-assume-reader.json
+```
+
+Keep `sts:AssumeRole` scoped to the reader role ARN. The ARC agent does not
+send session tags, so `sts:TagSession` is not needed here.
+
+### B4b: Let the reader role trust the IRSA role
+
+Add the IRSA role ARN as a principal in the reader role's trust policy. If VM
+runners already assume this role, keep their statement and add a second one;
+the `sts:TagSession` action is only required for the VM hook, which tags its
+session with `OrgName`:
+
+```bash
+export READER_ROLE_NAME="stepsecurity-api-key-reader"
+export ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
+
+cat > /tmp/reader-trust.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ARCHardenRunnerIRSA",
+      "Effect": "Allow",
+      "Principal": { "AWS": "${ROLE_ARN}" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+# Merge with any existing VM runner statements before applying:
+aws iam update-assume-role-policy \
+  --role-name "$READER_ROLE_NAME" \
+  --policy-document file:///tmp/reader-trust.json
+
+rm /tmp/reader-trust.json
+```
+
+### B4c: Let the reader role read the ARC secret (and the VM secret)
+
+The reader role is shared, so its permission policy must cover **both**
+secrets. They are different secrets holding different keys:
+
+| Runner type | Secret name | Read by |
+| --- | --- | --- |
+| Kubernetes (ARC) | `stepsecurity/orgs/<ghec\|ghdr\|ghes>/<ORG_NAME>/arc-api-key` (recommended, set via `env.keyless.secretName`), or the built-in default `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | Harden-Runner DaemonSet (this guide) |
+| VM self-hosted | `stepsecurity/orgs/<ghec\|ghdr\|ghes>/<ORG_NAME>/vm-api-key` | Pre-job hook on each VM runner |
+
+StepSecurity issues a separate key pair per scenario; the keys are not
+interchangeable, and both secrets must exist if both runner types are in
+use. The ARC secret is created in B2. Create the VM secret the same way, with
+the VM key and the same `<ghec|ghdr|ghes>` segment. The `*` in the policy
+below covers both the recommended and the built-in-default ARC name.
+
+```bash
+cat > /tmp/reader-permission.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadStepSecurityAPIKeys",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": [
+        "arn:aws:secretsmanager:${SECRET_REGION}:${SEC_ACCOUNT_ID}:secret:stepsecurity/orgs/*/${ORG_NAME}/arc-api-key-*",
+        "arn:aws:secretsmanager:${SECRET_REGION}:${SEC_ACCOUNT_ID}:secret:stepsecurity/orgs/*/${ORG_NAME}/vm-api-key-*"
+      ]
+    }
+  ]
+}
+EOF
+
+aws iam put-role-policy \
+  --role-name "$READER_ROLE_NAME" \
+  --policy-name "StepSecurityKeylessSecretRead" \
+  --policy-document file:///tmp/reader-permission.json
+
+rm /tmp/reader-permission.json
+```
+
+Things that bite here:
+
+- **Region in the ARN must match the artifact's `region`.** The agent calls
+  Secrets Manager in the region from the Artifactory config, not
+  `env.keyless.region`. If the secret lives elsewhere, the ARN above never
+  matches and `GetSecretValue` is denied with "no identity-based policy
+  allows the action".
+- **No `OrgName` tag condition on the ARC statement.** The VM hook tags its
+  session with `OrgName`; the ARC agent does not. A
+  `aws:PrincipalTag/OrgName` condition on the shared statement would deny the
+  ARC secret. If you condition the VM statement, keep the ARC statement
+  separate and unconditioned.
+- **Customer-managed KMS key.** If either secret is encrypted with a
+  customer-managed key instead of `aws/secretsmanager`, the reader role also
+  needs `kms:Decrypt` on that key. That is the next error after
+  `GetSecretValue` is allowed.
+- **Managed policies.** If you use a customer-managed policy instead of the
+  inline policy above, confirm it is attached to the reader role and that the
+  edited version is the default version
+  (`aws iam list-policy-versions --policy-arn <arn>`).
+- **Role chaining limit.** Chained sessions are capped at 1 hour. The agent
+  uses the SDK default duration, so this only matters if you set a longer
+  `DurationSeconds` on the role.
+
+Verify from the Central side with the policy simulator before asking DevOps
+to look at pod logs:
+
+```bash
+aws iam simulate-principal-policy \
+  --policy-source-arn "$READER_ROLE_ARN" \
+  --action-names secretsmanager:GetSecretValue \
+  --resource-arns "$SECRET_ARN"
+# "allowed": policy is fine; look at region/timing on the agent side.
+# "implicitDeny": policy is not attached or not the default version.
+```
+
 ## Troubleshooting (IRSA)
 
 The "fix owner" column tells you which team's side the problem is on.
@@ -480,7 +713,11 @@ The "fix owner" column tells you which team's side the problem is on.
 | `InvalidIdentityToken` / `No OpenIDConnect provider found in your account` | OIDC provider not registered in the Central account (B1 skipped, or run against the wrong account) | Central |
 | `AccessDenied` on `AssumeRoleWithWebIdentity` | Trust policy `Federated` ARN uses the DevOps account ID instead of Central's, issuer path typo, or `sub` doesn't match the namespace/service account | Central (values from DevOps handoff) |
 | `AccessDeniedException` on `GetSecretValue` | Central role missing `secretsmanager:GetSecretValue` on the secret ARN | Central |
-| `ResourceNotFoundException` | Secret name doesn't match `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`; secret in a different region than the agent queries (`env.keyless.region` unset or wrong); or the secret was created in the DevOps account instead of Central | Central (name/region) or DevOps (`env.keyless.region`) |
+| `AccessDenied` on `sts:AssumeRole` (`... is not authorized to perform: sts:AssumeRole on resource: <reader role>`) | Artifactory config in use. IRSA role missing the B4a `sts:AssumeRole` policy on the reader role ARN, or the reader role trust policy does not list the IRSA role (B4b) | Central |
+| `AccessDeniedException` on `GetSecretValue` for `assumed-role/<reader role>/...` ("no identity-based policy allows the action") | Artifactory config in use. Reader role policy missing or not attached (B4c); ARN region differs from the artifact's `region`; managed policy edited but default version not updated; or policy changed seconds before the call | Central |
+| `AccessDeniedException` on `GetSecretValue` mentioning KMS | Secret encrypted with a customer-managed key; the role that reads it (IRSA or reader) lacks `kms:Decrypt` on that key | Central |
+| `no Artifactory config with a download URI found` / `Artifactory config ... missing roleArn or region` | `keylessArtifactoryBase`/`keylessArtifactoryRepo` set, but no artifact in the repo carries `ss.serving=true` and `ss.gha-hook-config=true`, or the artifact JSON lacks `roleArn`/`region` | Whoever owns the Artifactory config |
+| `ResourceNotFoundException` | Secret name in Secrets Manager doesn't match what the agent asks for: `env.keyless.secretName` empty (agent falls back to `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`), or set but not identical to the created name; secret in a different region than the agent queries (`env.keyless.region` unset or wrong, or the Artifactory config's `region` when in use); or the secret was created in the DevOps account instead of Central | Central (name/region) or DevOps (`env.keyless.secretName`, `env.keyless.region`) |
 | `orgName is required` | `env.orgName` not set in Helm values | DevOps |
 | No AWS credentials | Service account annotation missing, or pods not restarted after annotating | DevOps |
 
@@ -488,7 +725,11 @@ The Central team can also confirm end-to-end identity from its side: CloudTrail
 in the Central account records the `AssumeRoleWithWebIdentity` calls, including
 the `sub` claim (`system:serviceaccount:kube-system:hardenrunner`), and the
 subsequent `GetSecretValue` calls under the role session. The Central
-account retains full visibility into which workload reads the key.
+account retains full visibility into which workload reads the key. With the
+Artifactory config option, CloudTrail additionally shows the `AssumeRole`
+call from the IRSA role session into the reader role; a denied
+`GetSecretValue` event records the region and secret ARN the agent actually
+used, which is the quickest way to spot a region mismatch.
 
 ---
 
@@ -578,7 +819,8 @@ sequenceDiagram
 
 - DevOps → Central (before Part B): source role ARN, StepSecurity org name,
   desired secret region.
-- Central → DevOps (before Part C): target role ARN, secret region (if
+- Central → DevOps (before Part C): target role ARN, secret name (for
+  `env.keyless.secretName`), secret region (if
   different from the cluster's region).
 
 Unlike the IRSA track, the Central team needs no cluster-specific
@@ -594,7 +836,7 @@ sequenceDiagram
     D->>C: Handoff: source role ARN,<br/>org name, secret region
     Note over C: B1 Create API key secret in Secrets Manager
     Note over C: B2 Create target role<br/>(trusts source role, reads secret)
-    C->>D: Handoff: target role ARN, secret region
+    C->>D: Handoff: target role ARN, secret name, secret region
     Note over D: C1 Allow source role to assume target role
     Note over D: C2 Create Pod Identity association<br/>(source + target)
     Note over D: C3 Set Helm values, apply, restart DaemonSet
@@ -714,12 +956,33 @@ export TARGET_ROLE_NAME="StepSecurityHardenRunnerSecretReader"
 
 ### B1: Create the secret in Secrets Manager
 
-The secret lives in `SECRET_REGION`, with this exact name:
-`stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`. The value must be a
-JSON object containing the API key: `{"api_key": "..."}`.
+The secret lives in `SECRET_REGION`. The value must be a JSON object
+containing the API key: `{"api_key": "..."}`.
+
+The agent looks the secret up by name. The built-in default is
+`stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`, but the name can be
+overridden per release with the `env.keyless.secretName` Helm value (name or
+full ARN), and we recommend doing so:
+
+| Naming | Secret name | Helm |
+| --- | --- | --- |
+| Recommended | `stepsecurity/orgs/<ghec\|ghdr\|ghes>/<ORG_NAME>/arc-api-key` | set `env.keyless.secretName` to this exact name |
+| Built-in default | `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key` | leave `env.keyless.secretName` empty |
+
+The recommended form mirrors the VM runner secret
+(`stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/vm-api-key`): one scheme for
+both runner types, one ARN pattern for the reader role, and no collision when
+the same org name exists on github.com and on a GHES/GHDR instance. Pick the
+segment from your GitHub environment: `ghec` for github.com, `ghdr` for
+`*.ghe.com`, `ghes` for any other hostname. Whichever name you pick, the
+secret name and the Helm value must match exactly; hand the final name to the
+DevOps team along with the role ARN.
 
 ```bash
-export SECRET_NAME="stepsecurity/orgs/github-orgs/${ORG_NAME}/arc-api-key"
+export GITHUB_ENV="ghec"                        # ghec | ghdr | ghes
+export SECRET_NAME="stepsecurity/orgs/${GITHUB_ENV}/${ORG_NAME}/arc-api-key"
+# Built-in default instead (env.keyless.secretName left empty):
+# export SECRET_NAME="stepsecurity/orgs/github-orgs/${ORG_NAME}/arc-api-key"
 
 # Prompt for the key so it never lands in shell history:
 read -r -s -p "StepSecurity API key: " STEPSECURITY_API_KEY; echo
@@ -896,6 +1159,12 @@ env:
     # Required if the secret's region (from the Central handoff) differs from
     # the cluster's region. Leave unset if they are the same.
     # region: "us-east-1"
+    # Secret name from the Central handoff (name or full ARN). Required when
+    # the secret uses the recommended
+    # stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/arc-api-key name; leave
+    # empty only if Central used the built-in default
+    # stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key.
+    secretName: "stepsecurity/orgs/<ghec|ghdr|ghes>/<ORG_NAME>/arc-api-key"
 ```
 
 With keyless mode enabled, the `apiKey` and `apiKeySecretName` values are
@@ -945,7 +1214,7 @@ The "fix owner" column tells you which team's side the problem is on.
 | `AccessDenied` when EKS assumes the source role | Source role trust policy missing `pods.eks.amazonaws.com`, or missing `sts:TagSession` | DevOps |
 | `AccessDenied` on the chained assume into the target role | Source role missing the C1 permission policy; target role trust policy does not list the source role ARN; `sts:TagSession` missing on either side | DevOps (C1) or Central (B2a) |
 | `AccessDeniedException` on `GetSecretValue` | Target role missing `secretsmanager:GetSecretValue` on the secret ARN | Central |
-| `ResourceNotFoundException` | Secret name doesn't match `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`; secret in a different region than the agent queries (`env.keyless.region` unset or wrong); or the secret was created in the DevOps account instead of Central | Central (name/region) or DevOps (`env.keyless.region`) |
+| `ResourceNotFoundException` | Secret name in Secrets Manager doesn't match what the agent asks for: `env.keyless.secretName` empty (agent falls back to `stepsecurity/orgs/github-orgs/<ORG_NAME>/arc-api-key`), or set but not identical to the created name; secret in a different region than the agent queries (`env.keyless.region` unset or wrong); or the secret was created in the DevOps account instead of Central | Central (name/region) or DevOps (`env.keyless.secretName`, `env.keyless.region`) |
 | `orgName is required` | `env.orgName` not set in Helm values | DevOps |
 | Association create fails with target-role error | Pod Identity Agent add-on too old for target roles; update the add-on | DevOps |
 
@@ -1030,7 +1299,9 @@ or a separate target role per account.
 **IRSA.** Nothing in the DevOps account can read the secret except pods
 running as `system:serviceaccount:<namespace>:hardenrunner` in the registered
 cluster(s), and the role they receive can only call `GetSecretValue` on
-this one secret.
+this one secret. With the Artifactory config option, the IRSA role can only
+assume the reader role, and the reader role can only read the ARC and VM API
+key secrets for this org.
 
 **Pod Identity.** Nothing in the DevOps account can obtain Central credentials
 except pods running as the associated service account in an associated
