@@ -14,7 +14,7 @@ import {
   PolicyStoreConfig,
   PolicyStoreFetchResult,
 } from "./policy";
-import { GhesConfig, Urls } from "./config";
+import { ExplicitProxyConfig, GhesConfig, Urls } from "./config";
 import { logInfo, logWarning } from "./common";
 
 export type SharedAgentConfig = {
@@ -42,7 +42,20 @@ export type SharedAgentConfig = {
   one_time_key: string;
   is_debug: boolean;
   is_ghes?: boolean;
+  is_explicit_proxy?: boolean;
+  explicit_proxy_endpoints?: string[];
 };
+
+export function parseExplicitProxyEndpoints(raw: string): string[] {
+  const seen = new Set<string>();
+  for (const entry of raw.split(/[\s,]+/)) {
+    const value = entry.trim();
+    if (value) {
+      seen.add(value);
+    }
+  }
+  return Array.from(seen);
+}
 
 export type JobPolicy = {
   apiKey: string;
@@ -234,6 +247,13 @@ export async function buildSharedAgentJsonForCurrentJob(
   if (options.egressPolicyAlwaysAudit) {
     logInfo("AgentConfig override=egress_policy value=audit");
     agentConfig.egress_policy = "audit";
+  }
+
+  const proxyEndpoints = parseExplicitProxyEndpoints(ExplicitProxyConfig.endpoints);
+  if (proxyEndpoints.length > 0) {
+    agentConfig.is_explicit_proxy = true;
+    agentConfig.explicit_proxy_endpoints = proxyEndpoints;
+    logInfo(`AgentConfig explicit_proxy_endpoints=${proxyEndpoints.join(",")}`);
   }
 
   writeJsonFile(

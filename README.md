@@ -10,7 +10,7 @@ Before configuring the hooks, ensure the runner has:
 
 - A GitHub Actions self-hosted runner installed and running.
 - Node.js available on `PATH` as `node`.
-- Network access to the configured hook asset URL and the StepSecurity API endpoint.
+- Network access to the configured hook asset URL and the StepSecurity API endpoint. If the runner reaches the internet only through an explicit HTTP proxy, see [Runners behind an explicit proxy](#runners-behind-an-explicit-proxy).
 - Permission to create a directory for the hook wrapper scripts, for example `/opt/step-security` on Linux.
 - Permission to set the GitHub Actions runner hook variables: `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.
 
@@ -127,6 +127,7 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_AGENT_ROOT_WINDOWS`    | `C:\agent`                                | Windows directory used for agent files, status files, logs, and hook state. This is separate from the wrapper script path configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.                                           |
 | `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                                                              |
 | `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                      |
+| `STEP_EXPLICIT_PROXY_ENDPOINTS` | ``                                        | Explicit HTTP proxies job traffic goes through, as `host:port` entries separated by commas or spaces, for example `aws-proxy.corp.example:8080`. Sets `is_explicit_proxy` and `explicit_proxy_endpoints` in `agent.json` so the agent reports the real destination of proxied connections. |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
 | `STEP_WINDOWS_SERVICE_NAME`  | `StepSecurityAgent`                       | Name of the Windows service managed by the hook.                                                                                                                                                                                                             |
 | `STEP_CUSTOMER`              | ``                                        | StepSecurity customer name. Required for GHDR and GHES VM runners when scoping the owner for policy and agent repository identity.                                                                                                                            |
@@ -142,6 +143,25 @@ The following environment variables can be used to configure the hook behavior:
 Set these values in the wrapper scripts or inject them through your runner configuration before running the hook. On Linux wrapper scripts, use `export STEP_NAME=value`. On Windows wrapper scripts, set them with PowerShell environment assignments such as `$env:STEP_AGENT_ROOT_WINDOWS='C:\agent'`.
 
 Each hook validates configured network endpoints at startup and logs warnings for failures. Pre-job hooks check `STEP_API`, `STEP_TELEMETRY_URL`, `STEP_ARTIFACTORY_BASE` or `ARTIFACTORY_BASE` when set, and, for VM keyless mode, AWS STS and Secrets Manager regional endpoints after resolving the region from Artifactory. The post-job hook checks only `STEP_API`. API-discovered agent asset URLs are not preflighted. VM pre-job hooks require either `STEP_API_KEY` or Artifactory keyless configuration; if configuration is missing or invalid, the hook logs the configuration problem and exits successfully after printing detailed diagnostics. Kubernetes pre-job hooks do not require API-key-related env vars during preflight.
+
+### Runners behind an explicit proxy
+
+Node's HTTP client does not read `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` by default, so on a runner whose only egress is an explicit proxy the hooks cannot reach the StepSecurity API, the release API, or an external Artifactory. Node 24 can be told to honour those variables. In the wrapper scripts, set the flag and run the hooks with a Node 24 binary; the GitHub Actions runner ships one under `externals/`:
+
+```sh
+export NODE_USE_ENV_PROXY=1
+/opt/actions-runner/externals/node24/bin/node /opt/step-security/hooks/pre.js
+```
+
+Node 20 ignores the flag. The proxy variables themselves must be present in the runner's environment (for example in the runner's `.env` or system-wide); `NO_PROXY` is honoured.
+
+To have the agent attribute proxied connections to their real destination instead of the proxy host, also add the proxy to the pre-job wrapper:
+
+```sh
+export STEP_EXPLICIT_PROXY_ENDPOINTS="aws-proxy.corp.example:8080"
+```
+
+This writes `is_explicit_proxy` and `explicit_proxy_endpoints` into `agent.json` and requires an agent release with explicit-proxy support. Egress policy (audit or block, allowed endpoints) is unchanged: it still comes from the Policy Store.
 
 ### Windows agent service
 
