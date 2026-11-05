@@ -1,17 +1,17 @@
 name: PR preview artifacts
 
-# Builds pre.js / post.js for every pull request opened from a branch in this
-# repository and publishes them twice: as a workflow artifact on the run, and as
-# a `pr-<number>` prerelease whose asset URLs stay stable while the PR is open
-# (so a runner wrapper can point at them for testing). The prerelease is
-# replaced on every push to the PR and deleted when the PR closes.
+# Builds pre.js / post.js once, when a pull request is opened from a branch in
+# this repository, and publishes them twice: as a workflow artifact on the run,
+# and as a `pr-<number>` prerelease whose asset URLs are stable (so a runner
+# wrapper can point at them for testing). Later pushes to the PR do not rebuild;
+# close and reopen the PR, or re-run this workflow, to refresh the preview.
 #
 # Pull requests from forks are skipped: their GITHUB_TOKEN is read-only, and we
 # do not want to publish code that a repository writer has not pushed.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened]
 
 permissions:
   contents: write
@@ -23,9 +23,7 @@ concurrency:
 
 jobs:
   build:
-    if: >-
-      github.event.action != 'closed' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       PREVIEW_TAG: pr-${{ github.event.pull_request.number }}
@@ -72,8 +70,8 @@ jobs:
             dist/checksums.txt
           if-no-files-found: error
 
-      # Delete and recreate so the tag moves to the new head and the assets are
-      # replaced atomically; `--cleanup-tag` removes the old tag with the release.
+      # Delete any earlier preview for this PR number first so the tag points at
+      # this head; `--cleanup-tag` removes the old tag with the release.
       - name: Publish preview prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,7 +82,7 @@ jobs:
             --prerelease \
             --target "${HEAD_SHA}" \
             --title "Preview build for PR #${{ github.event.pull_request.number }}" \
-            --notes "Automated preview build of ${PR_URL} at ${HEAD_SHA}. Not a release; replaced on every push and removed when the PR closes." \
+            --notes "Automated preview build of ${PR_URL} at ${HEAD_SHA}. Not a release." \
             dist/pre.js#pre.js \
             dist/post.js#post.js \
             dist/checksums.txt#checksums.txt
@@ -95,7 +93,7 @@ jobs:
         run: |
           base="${{ github.server_url }}/${{ github.repository }}/releases/download/${PREVIEW_TAG}"
           {
-            echo "**Preview hook build** for ${HEAD_SHA::7} (replaced on every push, removed when the PR closes):"
+            echo "**Preview hook build** for ${HEAD_SHA::7} (built when the PR was opened; re-run the workflow to refresh):"
             echo
             echo "- ${base}/pre.js"
             echo "- ${base}/post.js"
@@ -106,18 +104,3 @@ jobs:
             echo '```'
           } > comment.md
           gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md --edit-last --create-if-none
-
-  cleanup:
-    if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-
-      - name: Remove preview prerelease
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release delete "pr-${{ github.event.pull_request.number }}" --cleanup-tag --yes 2>/dev/null || echo "no preview release to remove"
