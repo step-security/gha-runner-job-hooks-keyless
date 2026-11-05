@@ -1,0 +1,123 @@
+name: PR preview artifacts
+
+# Builds pre.js / post.js for every pull request opened from a branch in this
+# repository and publishes them twice: as a workflow artifact on the run, and as
+# a `pr-<number>` prerelease whose asset URLs stay stable while the PR is open
+# (so a runner wrapper can point at them for testing). The prerelease is
+# replaced on every push to the PR and deleted when the PR closes.
+#
+# Pull requests from forks are skipped: their GITHUB_TOKEN is read-only, and we
+# do not want to publish code that a repository writer has not pushed.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      PREVIEW_TAG: pr-${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Test
+        run: npm run test
+
+      - name: Build preview artifacts
+        run: |
+          printf 'export const HookVersion = "%s";\n' "${PREVIEW_TAG}-${HEAD_SHA::7}" > src/version.ts
+          npm run build
+          cat dist/checksums.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hooks-${{ env.PREVIEW_TAG }}-${{ github.event.pull_request.head.sha }}
+          path: |
+            dist/pre.js
+            dist/post.js
+            dist/checksums.txt
+          if-no-files-found: error
+
+      # Delete and recreate so the tag moves to the new head and the assets are
+      # replaced atomically; `--cleanup-tag` removes the old tag with the release.
+      - name: Publish preview prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh release delete "${PREVIEW_TAG}" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "${PREVIEW_TAG}" \
+            --prerelease \
+            --target "${HEAD_SHA}" \
+            --title "Preview build for PR #${{ github.event.pull_request.number }}" \
+            --notes "Automated preview build of ${PR_URL} at ${HEAD_SHA}. Not a release; replaced on every push and removed when the PR closes." \
+            dist/pre.js#pre.js \
+            dist/post.js#post.js \
+            dist/checksums.txt#checksums.txt
+
+      - name: Comment asset URLs on the PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          base="${{ github.server_url }}/${{ github.repository }}/releases/download/${PREVIEW_TAG}"
+          {
+            echo "**Preview hook build** for ${HEAD_SHA::7} (replaced on every push, removed when the PR closes):"
+            echo
+            echo "- ${base}/pre.js"
+            echo "- ${base}/post.js"
+            echo "- ${base}/checksums.txt"
+            echo
+            echo '```'
+            cat dist/checksums.txt
+            echo '```'
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md --edit-last --create-if-none
+
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Remove preview prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release delete "pr-${{ github.event.pull_request.number }}" --cleanup-tag --yes 2>/dev/null || echo "no preview release to remove"
