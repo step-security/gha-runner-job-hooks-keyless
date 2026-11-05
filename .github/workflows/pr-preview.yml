@@ -1,0 +1,73 @@
+name: PR preview artifacts
+
+# Builds pre.js / post.js for pull requests opened from a branch in this
+# repository and uploads them as a workflow artifact, so a change can be tried
+# on a test runner before it is released. Download from the run's summary page
+# (or `gh run download <run-id>`). Artifacts expire with the repository's
+# retention setting; nothing is published as a release.
+#
+# Runs with a read-only token and no persisted credentials: PR code and its
+# dependencies never see anything they could write with.
+#
+# Pull requests from forks are skipped.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Test
+        run: npm run test
+
+      - name: Build preview artifacts
+        run: |
+          printf 'export const HookVersion = "pr-%s-%s";\n' "${PR_NUMBER}" "${HEAD_SHA::7}" > src/version.ts
+          npm run build
+          cat dist/checksums.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hooks-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: |
+            dist/pre.js
+            dist/post.js
+            dist/checksums.txt
+          if-no-files-found: error
