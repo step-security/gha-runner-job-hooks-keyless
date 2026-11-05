@@ -4,6 +4,10 @@ GitHub Actions self-hosted runner job hooks for running StepSecurity pre-job and
 
 The hook scripts are published as GitHub release assets and can be mirrored internally for runner teams to consume through small wrapper scripts.
 
+## Preview builds for pull requests
+
+Pull requests opened from a branch in this repository get an unreviewed preview build of `pre.js` and `post.js` as a workflow artifact (`hooks-pr-<number>-<sha>`) on the "PR preview artifacts" run, rebuilt on every push. Download it from the run's summary page or with `gh run download <run-id>`, and point a test runner's wrapper at the files to try the change before it is released; do not use them in production. Artifacts expire with the repository's retention setting. Pull requests from forks do not get preview builds.
+
 ## Prerequisites
 
 Before configuring the hooks, ensure the runner has:
@@ -127,7 +131,7 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_AGENT_ROOT_WINDOWS`    | `C:\agent`                                | Windows directory used for agent files, status files, logs, and hook state. This is separate from the wrapper script path configured in `ACTIONS_RUNNER_HOOK_JOB_STARTED` and `ACTIONS_RUNNER_HOOK_JOB_COMPLETED`.                                           |
 | `STEP_DISABLE_AGENT_UPDATE`  | `false`                                   | Set to `true` to disable automatic Linux agent download/update.                                                                                                                                                                                              |
 | `STEP_AGENT_VERSION_LINUX`   | `latest`                                  | Linux agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                      |
-| `STEP_EXPLICIT_PROXY_ENDPOINTS` | ``                                        | Explicit HTTP proxies job traffic goes through, as `host:port` entries separated by commas or spaces, for example `aws-proxy.corp.example:8080`. Sets `is_explicit_proxy` and `explicit_proxy_endpoints` in `agent.json` so the agent reports the real destination of proxied connections. |
+| `STEP_EXPLICIT_PROXY_ENDPOINTS` | ``                                        | Override for the explicit proxies job traffic goes through, as `host:port` entries separated by commas or spaces. Normally not needed: the hook derives them from `HTTPS_PROXY` / `HTTP_PROXY` (either case) in the runner environment.                                                    |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
 | `STEP_WINDOWS_SERVICE_NAME`  | `StepSecurityAgent`                       | Name of the Windows service managed by the hook.                                                                                                                                                                                                             |
 | `STEP_CUSTOMER`              | ``                                        | StepSecurity customer name. Required for GHDR and GHES VM runners when scoping the owner for policy and agent repository identity.                                                                                                                            |
@@ -155,7 +159,7 @@ export NODE_USE_ENV_PROXY=1
 
 Node 20 ignores the flag. The proxy variables themselves must be present in the runner's environment (for example in the runner's `.env` or system-wide); `NO_PROXY` is honoured.
 
-To have the agent attribute proxied connections to their real destination instead of the proxy host, also add the proxy to the pre-job wrapper:
+When the runner environment has `HTTPS_PROXY` / `HTTP_PROXY` (either case), the hook also writes the proxy's `host:port` into `agent.json` so the agent attributes proxied connections to their real destination instead of the proxy host. No extra variable is needed; `STEP_EXPLICIT_PROXY_ENDPOINTS` can override the derived list if the job traffic uses a different proxy than the hook:
 
 ```sh
 export STEP_EXPLICIT_PROXY_ENDPOINTS="aws-proxy.corp.example:8080"

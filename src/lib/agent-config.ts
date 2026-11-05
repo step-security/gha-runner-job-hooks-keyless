@@ -57,6 +57,46 @@ export function parseExplicitProxyEndpoints(raw: string): string[] {
   return Array.from(seen);
 }
 
+// host:port of a proxy URL as found in HTTPS_PROXY / HTTP_PROXY. Accepts
+// "http://host:port", "http://user:pass@host:port", and a bare "host:port".
+// The port defaults from the scheme when the URL has none.
+export function proxyEndpointFromUrl(raw: string | undefined): string {
+  const value = (raw || "").trim();
+  if (!value) {
+    return "";
+  }
+  try {
+    const url = new URL(value.includes("://") ? value : `http://${value}`);
+    if (!url.hostname) {
+      return "";
+    }
+    const port = url.port || (url.protocol === "https:" ? "443" : "80");
+    return `${url.hostname}:${port}`;
+  } catch {
+    return "";
+  }
+}
+
+// The proxies to tell the agent about: the explicit override if set,
+// otherwise whatever the runner's proxy variables point at, deduplicated.
+export function resolveExplicitProxyEndpoints(config: {
+  endpoints: string;
+  proxyUrls: readonly (string | undefined)[];
+}): string[] {
+  const explicit = parseExplicitProxyEndpoints(config.endpoints);
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  const seen = new Set<string>();
+  for (const url of config.proxyUrls) {
+    const endpoint = proxyEndpointFromUrl(url);
+    if (endpoint) {
+      seen.add(endpoint);
+    }
+  }
+  return Array.from(seen);
+}
+
 export type JobPolicy = {
   apiKey: string;
   correlationId: string;
@@ -249,7 +289,7 @@ export async function buildSharedAgentJsonForCurrentJob(
     agentConfig.egress_policy = "audit";
   }
 
-  const proxyEndpoints = parseExplicitProxyEndpoints(ExplicitProxyConfig.endpoints);
+  const proxyEndpoints = resolveExplicitProxyEndpoints(ExplicitProxyConfig);
   if (proxyEndpoints.length > 0) {
     agentConfig.is_explicit_proxy = true;
     agentConfig.explicit_proxy_endpoints = proxyEndpoints;
