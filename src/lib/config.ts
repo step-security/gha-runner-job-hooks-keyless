@@ -6,6 +6,13 @@ export const AgentRuntimeConfig = {
   isEphemeralLinux: process.env.STEP_IS_EPHEMERAL === "true",
 } as const;
 
+// Explicit HTTP proxies job traffic goes through (host:port, comma or space
+// separated). When set, the agent attributes proxied connections to their real
+// destination instead of the proxy.
+export const ExplicitProxyConfig = {
+  endpoints: process.env.STEP_EXPLICIT_PROXY_ENDPOINTS || "",
+} as const;
+
 export const WindowsAgentReleaseConfig = {
   windowsAgentVersion: process.env.STEP_AGENT_VERSION_WINDOWS || "latest",
 } as const;
