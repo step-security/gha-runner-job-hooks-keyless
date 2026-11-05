@@ -2,10 +2,12 @@ name: PR preview artifacts
 
 # Builds pre.js / post.js for pull requests opened from a branch in this
 # repository and publishes them twice: as a workflow artifact on the run, and as
-# a `pr-<number>` prerelease whose asset URLs stay stable while the PR is open,
-# so a test runner's wrapper can point at them. The prerelease is replaced on
-# every push to the PR and deleted when the PR closes. A preview can also be
-# rebuilt on demand with "Run workflow" and the PR number.
+# a `pr-<number>-<sha7>` prerelease so a test runner's wrapper can point at the
+# asset URLs. Releases in this repository are immutable, so a tag can never be
+# reused: every build gets its own release, previous builds of the same PR are
+# deleted once the new one is published, and all of them are deleted when the
+# PR closes. A preview can also be rebuilt on demand with "Run workflow" and
+# the PR number.
 #
 # Previews are unreviewed code: the release notes and the PR comment say so.
 #
@@ -99,10 +101,10 @@ jobs:
 
       - name: Build preview artifacts
         env:
-          PREVIEW_TAG: pr-${{ needs.context.outputs.number }}
+          PR_NUMBER: ${{ needs.context.outputs.number }}
           HEAD_SHA: ${{ needs.context.outputs.head_sha }}
         run: |
-          printf 'export const HookVersion = "%s";\n' "${PREVIEW_TAG}-${HEAD_SHA::7}" > src/version.ts
+          printf 'export const HookVersion = "pr-%s-%s";\n' "${PR_NUMBER}" "${HEAD_SHA::7}" > src/version.ts
           npm run build
           cat dist/checksums.txt
 
@@ -128,7 +130,6 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ needs.context.outputs.number }}
-      PREVIEW_TAG: pr-${{ needs.context.outputs.number }}
       HEAD_SHA: ${{ needs.context.outputs.head_sha }}
       PR_URL: ${{ needs.context.outputs.url }}
     steps:
@@ -143,21 +144,30 @@ jobs:
           name: hooks-pr-${{ needs.context.outputs.number }}-${{ needs.context.outputs.head_sha }}
           path: dist
 
-      # Replace the previous preview so the tag follows the PR head. Only a
-      # missing release is tolerated; any other failure stops the job.
+      # One immutable release per build. If this exact build already exists
+      # (re-run), keep it. Afterwards drop the other previews of this PR so
+      # only the latest build keeps a URL.
       - name: Publish preview prerelease
         run: |
-          if gh release view "${PREVIEW_TAG}" >/dev/null 2>&1; then
-            gh release delete "${PREVIEW_TAG}" --cleanup-tag --yes
+          tag="pr-${PR_NUMBER}-${HEAD_SHA::7}"
+          echo "PREVIEW_TAG=${tag}" >> "$GITHUB_ENV"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "release ${tag} already exists; keeping it"
+          else
+            gh release create "${tag}" \
+              --prerelease \
+              --target "${HEAD_SHA}" \
+              --title "Preview build for PR #${PR_NUMBER} at ${HEAD_SHA::7} (unreviewed)" \
+              --notes "UNREVIEWED preview build of ${PR_URL} at ${HEAD_SHA}, for testing only. Not for production use. Superseded builds are removed on the next push; all previews are removed when the PR closes." \
+              dist/pre.js#pre.js \
+              dist/post.js#post.js \
+              dist/checksums.txt#checksums.txt
           fi
-          gh release create "${PREVIEW_TAG}" \
-            --prerelease \
-            --target "${HEAD_SHA}" \
-            --title "Preview build for PR #${PR_NUMBER} (unreviewed)" \
-            --notes "UNREVIEWED preview build of ${PR_URL} at ${HEAD_SHA}, for testing only. Not for production use. Replaced on every push to the PR and removed when it closes." \
-            dist/pre.js#pre.js \
-            dist/post.js#post.js \
-            dist/checksums.txt#checksums.txt
+          gh release list --limit 200 --json tagName --jq ".[].tagName | select(startswith(\"pr-${PR_NUMBER}-\") and . != \"${tag}\")" \
+            | while read -r old; do
+                echo "removing superseded preview ${old}"
+                gh release delete "${old}" --cleanup-tag --yes
+              done
 
       - name: Comment asset URLs on the PR
         env:
@@ -165,7 +175,7 @@ jobs:
         run: |
           base="${SERVER_URL}/${GH_REPO}/releases/download/${PREVIEW_TAG}"
           {
-            echo "**Unreviewed preview hook build** for ${HEAD_SHA::7}, for testing only. Replaced on every push, removed when the PR closes."
+            echo "**Unreviewed preview hook build** for ${HEAD_SHA::7}, for testing only. Superseded builds are removed on the next push; all previews are removed when the PR closes."
             echo
             echo "- ${base}/pre.js"
             echo "- ${base}/post.js"
@@ -185,17 +195,20 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      PREVIEW_TAG: pr-${{ github.event.pull_request.number }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
 
-      - name: Remove preview prerelease
+      - name: Remove preview prereleases
         run: |
-          if gh release view "${PREVIEW_TAG}" >/dev/null 2>&1; then
-            gh release delete "${PREVIEW_TAG}" --cleanup-tag --yes
-          else
-            echo "no preview release to remove"
-          fi
+          found=0
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            found=1
+            echo "removing preview ${tag}"
+            gh release delete "${tag}" --cleanup-tag --yes
+          done < <(gh release list --limit 200 --json tagName --jq ".[].tagName | select(startswith(\"pr-${PR_NUMBER}-\"))")
+          [ "$found" = 1 ] || echo "no preview releases to remove"

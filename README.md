@@ -6,7 +6,7 @@ The hook scripts are published as GitHub release assets and can be mirrored inte
 
 ## Preview builds for pull requests
 
-Pull requests opened from a branch in this repository get an unreviewed preview build of `pre.js` and `post.js`: a workflow artifact on the run, and a `pr-<number>` prerelease with stable asset URLs (the bot comments them on the PR). Point a test runner's wrapper at those URLs to try the change before it is released; do not use them in production. The prerelease is replaced on every push to the PR, can be rebuilt on demand with "Run workflow" and the PR number, and is removed when the PR closes. Pull requests from forks do not get preview builds.
+Pull requests opened from a branch in this repository get an unreviewed preview build of `pre.js` and `post.js`: a workflow artifact on the run, and a `pr-<number>-<sha>` prerelease (the bot comments the asset URLs on the PR; releases here are immutable, so each build gets its own tag). Point a test runner's wrapper at those URLs to try the change before it is released; do not use them in production. Each push to the PR publishes a new build and removes the previous one; a build can also be made on demand with "Run workflow" and the PR number, and is removed when the PR closes. Pull requests from forks do not get preview builds.
 
 ## Prerequisites
 
