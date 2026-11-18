@@ -4,10 +4,6 @@ GitHub Actions self-hosted runner job hooks for running StepSecurity pre-job and
 
 The hook scripts are published as GitHub release assets and can be mirrored internally for runner teams to consume through small wrapper scripts.
 
-## Preview builds for pull requests
-
-Pull requests opened from a branch in this repository get an unreviewed preview build of `pre.js` and `post.js` as a workflow artifact (`hooks-pr-<number>-<sha>`) on the "PR preview artifacts" run, rebuilt on every push. Download it from the run's summary page or with `gh run download <run-id>`, and point a test runner's wrapper at the files to try the change before it is released; do not use them in production. Artifacts expire with the repository's retention setting. Pull requests from forks do not get preview builds.
-
 ## Prerequisites
 
 Before configuring the hooks, ensure the runner has:
