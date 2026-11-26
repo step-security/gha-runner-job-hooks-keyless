@@ -12,13 +12,19 @@ export async function appendJobSummary(params: {
   correlationId: string;
   environment: string;
   includeTimeRange?: boolean;
+  // Owner to request the summary under when it differs from the GitHub owner
+  // (the scoped GHDR and GHES owner). Defaults to the GitHub owner.
+  owner?: string;
 }): Promise<void> {
   if (!params.correlationId) {
     return;
   }
 
+  const repository = params.owner
+    ? `${params.owner}/${RuntimeConfig.repo}`
+    : RuntimeConfig.githubRepository;
   const summaryUrl = new URL(
-    `${Urls.stepSecurityApi}/github/${RuntimeConfig.githubRepository}/actions/runs/${RuntimeConfig.runId}/correlation/${params.correlationId}/job-markdown-summary`,
+    `${Urls.stepSecurityApi}/github/${repository}/actions/runs/${RuntimeConfig.runId}/correlation/${params.correlationId}/job-markdown-summary`,
   );
   summaryUrl.searchParams.append("environment", params.environment);
 
