@@ -11,6 +11,7 @@ import {
   fetchWorkflowPolicyStatus,
   handleBlockedRunPolicyEvaluation,
 } from "../../lib/policy";
+import { buildPrejobPolicyPayload, resolveK8sScopedOwner } from "./scope";
 
 const RuntimeConfig = {
   ...getGithubRunContext(),
@@ -20,9 +21,15 @@ const RuntimeConfig = {
 export async function runK8sPreJobHook(): Promise<void> {
   logInfo("PRE-JOB HOOK: Checking for policy from Policy Store...");
 
+  const scopedOwner = resolveK8sScopedOwner(RuntimeConfig.owner);
+  if (scopedOwner === null) {
+    logInfo("PRE-JOB HOOK: Skipped, Policy Store owner could not be resolved");
+    return;
+  }
+
   const { hasPolicy, shouldSleep, runPolicyEvaluation } =
     await fetchWorkflowPolicyCheck({
-      owner: RuntimeConfig.owner,
+      owner: scopedOwner,
       repo: RuntimeConfig.repo,
       workflow: RuntimeConfig.workflow,
       runId: RuntimeConfig.runId,
@@ -37,12 +44,12 @@ export async function runK8sPreJobHook(): Promise<void> {
   if (hasPolicy) {
     logInfo("Policy found, applying policy...");
 
-    const policySignal = getPolicySignal();
+    const policySignal = getPolicySignal(scopedOwner);
     emitPolicySignal(echoCommand, policySignal);
 
     if (shouldSleep) {
       await waitForPolicy(
-        RuntimeConfig.owner,
+        scopedOwner,
         RuntimeConfig.repo,
         RuntimeConfig.correlationId,
         policySignal,
@@ -110,8 +117,14 @@ async function checkPolicyStatus(
   return fetchWorkflowPolicyStatus({ owner, repo, correlationId });
 }
 
-function getPolicySignal(): string {
-  const stringToEncode = `${RuntimeConfig.githubRepository}/${RuntimeConfig.workflow}/${RuntimeConfig.runId}/${RuntimeConfig.job}`;
+function getPolicySignal(scopedOwner: string): string {
+  const stringToEncode = buildPrejobPolicyPayload({
+    scopedOwner,
+    repo: RuntimeConfig.repo,
+    workflow: RuntimeConfig.workflow,
+    runId: RuntimeConfig.runId,
+    job: RuntimeConfig.job,
+  });
   const encodedString = toBase64Utf8(stringToEncode);
   return `step_policy_prejob_${encodedString}`;
 }

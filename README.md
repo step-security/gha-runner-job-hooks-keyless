@@ -130,8 +130,8 @@ The following environment variables can be used to configure the hook behavior:
 | `STEP_EXPLICIT_PROXY_ENDPOINTS` | ``                                        | Override for the explicit proxies job traffic goes through, as `host:port` entries separated by commas or spaces. Normally not needed: the hook derives them from `HTTPS_PROXY` / `HTTP_PROXY` (either case) in the runner environment.                                                    |
 | `STEP_AGENT_VERSION_WINDOWS` | `latest`                                  | Windows agent release to install. Use `latest` or a specific release tag.                                                                                                                                                                                    |
 | `STEP_WINDOWS_SERVICE_NAME`  | `StepSecurityAgent`                       | Name of the Windows service managed by the hook.                                                                                                                                                                                                             |
-| `STEP_CUSTOMER`              | ``                                        | StepSecurity customer name. Required for GHDR and GHES VM runners when scoping the owner for policy and agent repository identity.                                                                                                                            |
-| `STEP_SERVER_NAME`           | ``                                        | StepSecurity server name. Required for GHDR and GHES VM runners when scoping the owner for policy and agent repository identity.                                                                                                                              |
+| `STEP_CUSTOMER`              | ``                                        | StepSecurity customer name. Required for GHDR and GHES runners (VM and Kubernetes) when scoping the owner for policy and agent repository identity.                                                                                                                            |
+| `STEP_SERVER_NAME`           | ``                                        | StepSecurity server name. Required for GHDR and GHES runners (VM and Kubernetes) when scoping the owner for policy and agent repository identity.                                                                                                                              |
 | `STEP_ARTIFACTORY_BASE`      | ``                                        | Artifactory base URL, required for VM keyless configuration and optional for property-based serving resolution, for example `https://stepsecurity.jfrog.io/artifactory`. When set together with `STEP_ARTIFACTORY_REPO`, the hook resolves the current serving artifact by Artifactory item properties. |
 | `STEP_ARTIFACTORY_REPO`      | ``                                        | Artifactory repository name used with `STEP_ARTIFACTORY_BASE`, for example `jatin-repo1`. Required for VM keyless configuration or property-based serving resolution.                                                                                                    |
 | `STEP_API_KEY`               | ``                                        | StepSecurity API key. If set, the hook uses this value directly.                                                                                                                                                                                             |
@@ -225,6 +225,18 @@ The hook detects the GitHub environment from `GITHUB_SERVER_URL`, defaulting to 
 | Any other hostname | `ghes` |
 
 For GHDR and GHES VM runners, set `STEP_CUSTOMER` and `STEP_SERVER_NAME`. Policy Store requests and the repository identity sent to the agent use `<customer>::<server_name>::<owner>`, and the generated agent JSON includes `"is_ghes": true`. API-key secret-name replacement and the `OrgName` STS session tag continue to use the raw GitHub owner.
+
+Kubernetes (ARC) runners on GHDR and GHES need the same two variables. Export them in the hook wrapper scripts (`pre-job-hook.sh` and `post-hook.sh`), or set them on the runner container:
+
+```bash
+#!/bin/bash
+export STEP_LINUX_HOOK_MODE="k8s"
+export STEP_CUSTOMER="<customer>"
+export STEP_SERVER_NAME="<server_name>"
+/home/runner/externals/node24/bin/node /job-hooks/pre.js
+```
+
+The Kubernetes hooks then use `<customer>::<server_name>::<owner>` for the Policy Store check, the policy signal read by the Harden-Runner DaemonSet, the policy status poll and the job summary. If either variable is missing on GHDR or GHES, the hook logs a warning and an error annotation, skips the Policy Store check and the job summary, and lets the job continue.
 
 It reads the configuration once per pre-job invocation, logs each configuration URL it tries and its region, and resolves the secret name from `STEP_API_KEY_SECRET_NAME`, which defaults to `stepsecurity/orgs/<github_env>/<owner>/vm-api-key`, preserving the GitHub owner's casing. No matching configuration items, or no item with a download URL, produce a configuration error. There is no fallback to the former runner role or region environment variables.
 
